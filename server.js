@@ -1,18 +1,28 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import OpenAI from "openai";
 
 dotenv.config();
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+app.get("/", (req, res) => {
+  res.send("BrainTrip backend is running 🚀");
+});
+
 app.post("/trivia", async (req, res) => {
   try {
-    const { city } = req.body;
+    const { city } = req.body ?? {};
 
-    if (!city) {
+    if (!city || typeof city !== "string" || !city.trim()) {
       return res.status(400).json({ error: "City is required" });
     }
 
@@ -61,75 +71,122 @@ Rules:
   "Culture & Landmarks",
   "Local Experience"
 
-Return ONLY valid JSON as an array.
-Do not use markdown.
-Do not wrap the response in triple backticks.
-
-Each item must look exactly like:
-{
-  "question": "string",
-  "options": ["string", "string", "string", "string"],
-  "correctAnswer": "string",
-  "funFact": "string",
-  "category": "string"
-}
+Return valid JSON only.
 `;
 
-    console.log("🔥 Generating trivia for:", cleanCity);
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    const response = await client.responses.create({
+      model: "gpt-4.1-mini",
+      input: [
+        {
+          role: "system",
+          content: "You are a precise JSON generator for a travel trivia app.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 1,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "braintrip_trivia",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              questions: {
+                type: "array",
+                minItems: 5,
+                maxItems: 5,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    question: { type: "string" },
+                    options: {
+                      type: "array",
+                      minItems: 4,
+                      maxItems: 4,
+                      items: { type: "string" },
+                    },
+                    correctAnswer: { type: "string" },
+                    funFact: { type: "string" },
+                    category: {
+                      type: "string",
+                      enum: [
+                        "Neighborhoods",
+                        "Food & Drink",
+                        "Nightlife",
+                        "Culture & Landmarks",
+                        "Local Experience",
+                      ],
+                    },
+                  },
+                  required: [
+                    "question",
+                    "options",
+                    "correctAnswer",
+                    "funFact",
+                    "category",
+                  ],
+                },
+              },
+            },
+            required: ["questions"],
+          },
+        },
       },
-      body: JSON.stringify({
-        model: "gpt-5-3",
-        messages: [
-          {
-            role: "system",
-            content: "You are a precise JSON generator.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        temperature: 1,
-      }),
     });
 
-    const data = await response.json();
+    const output = response.output_text;
 
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      console.error("❌ No content returned:", data);
+    if (!output) {
+      console.error("No output_text returned from OpenAI:", response);
       return res.status(500).json({ error: "No response from AI" });
     }
 
     let parsed;
 
     try {
-      parsed = JSON.parse(content);
-    } catch (err) {
-      console.error("❌ JSON parse error:", content);
+      parsed = JSON.parse(output);
+    } catch (error) {
+      console.error("JSON parse error:", output);
       return res.status(500).json({ error: "Invalid JSON from AI" });
     }
 
-    console.log("✅ Trivia generated successfully");
+    if (!parsed?.questions || !Array.isArray(parsed.questions)) {
+      return res.status(500).json({ error: "Invalid trivia format from AI" });
+    }
 
-    res.json({
+    const cleanedQuestions = parsed.questions.map((q) => {
+      const options = Array.isArray(q.options) ? q.options : [];
+      const correctAnswer =
+        options.includes(q.correctAnswer) && typeof q.correctAnswer === "string"
+          ? q.correctAnswer
+          : options[0] || "";
+
+      return {
+        question: q.question,
+        options,
+        correctAnswer,
+        funFact: q.funFact,
+        category: q.category,
+      };
+    });
+
+    return res.json({
       city: cleanCity,
-      questions: parsed,
+      questions: cleanedQuestions,
     });
   } catch (error) {
-    console.error("❌ Server error:", error);
-    res.status(500).json({ error: "Server error" });
+    console.error("Trivia generation error:", error);
+    return res.status(500).json({ error: "Failed to generate trivia" });
   }
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
