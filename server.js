@@ -35,45 +35,76 @@ You are creating premium travel trivia for an app called BrainTrip.
 City: ${cleanCity}
 Mode: ${gameMode}
 
-Your job is to generate HIGH-QUALITY, NON-REPETITIVE trivia.
+-----------------------------------
+STRICT QUESTION FOCUS:
+
+- MOST questions MUST reference REAL, SPECIFIC places:
+  - landmarks
+  - attractions
+  - neighborhoods
+  - notable venues (bars, restaurants, clubs, etc.)
+
+- Food questions are allowed ONLY if:
+  - the item is iconic to the city
+  - widely recognized (e.g., deep dish pizza in Chicago)
 
 -----------------------------------
-DIFFICULTY RULES:
+STRICT ANSWER FORMAT:
+
+- Answers must be SHORT
+- Prefer 1–3 words max
+- Prefer proper nouns (place names)
+- Examples:
+  - "Central Park"
+  - "Eiffel Tower"
+  - "South Beach"
+
+- DO NOT use full sentences as answers
+
+-----------------------------------
+STRICT DIFFICULTY RULES:
 
 If mode is "standard":
 - Medium difficulty
-- Focus on well-known landmarks, food, neighborhoods, and culture
-- Questions should feel familiar but still interesting
+- Focus on well-known places and recognizable locations
+- User should feel: "I might know this"
 
 If mode is "challenge":
-- Medium to HARD difficulty
-- Focus on hidden gems, niche facts, local behavior, deeper cultural insights
-- Avoid obvious tourist facts entirely
-- Make questions slightly trickier but still fair
------------------------------------
+- Noticeably harder
+- Focus on:
+  - hidden gems
+  - niche locations
+  - local-only knowledge
+- DO NOT include:
+  - famous landmarks
+  - obvious tourist spots
+- User should feel: "I wouldn’t know this unless I’ve been there"
 
+-----------------------------------
 QUALITY RULES:
-- Questions must feel like they come from a LOCAL or experienced traveler
-- Avoid generic or overused trivia
-- Avoid repeating common facts across different runs
-- Make each question feel unique and memorable
-- Slightly conversational tone (not textbook)
+
+- NO generic trivia
+- NO repeated or predictable questions
+- Questions must feel engaging and slightly challenging
+- Each question should feel unique and specific
+- Avoid textbook or robotic phring
+- Keep tone clean and consistent
 
 -----------------------------------
-
 STRUCTURE:
+
 Generate exactly 8 multiple-choice questions.
 
 Each question must include:
-- question
-- 4 answer options
-- correctAnswer (must match one option exactly)
-- funFact (short, interesting, specific)
+- question (clear and engaging)
+- 4 answer options (short + clean)
+- correctAnswer (must exactly match one option)
+- funFact (1 short, interesting sentence)
 - category
 
 -----------------------------------
-
 CATEGORIES (use each at least once):
+
 - "Neighborhoods"
 - "Food & Drink"
 - "Nightlife"
@@ -81,10 +112,14 @@ CATEGORIES (use each at least once):
 - "Local Experience"
 
 -----------------------------------
+CRITICAL RULE:
 
+Challenge mode questions MUST NOT overlap with standard-level topics.
+
+-----------------------------------
 RETURN FORMAT:
-Return ONLY valid JSON.
 
+Return ONLY valid JSON.
 `;
 
     const response = await client.responses.create({
