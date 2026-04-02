@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import OpenAI from "openai";
 
 dotenv.config();
 
@@ -9,24 +8,58 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-app.get("/", (req, res) => {
-  res.send("BrainTrip backend is running 🚀");
-});
-
 app.post("/trivia", async (req, res) => {
   try {
     const { city } = req.body;
 
-    if (!city || !city.trim()) {
+    if (!city) {
       return res.status(400).json({ error: "City is required" });
     }
 
+    const cleanCity = city.trim();
+
     const prompt = `
-Generate 5 medium to medium-hard travel trivia questions about ${city}.
+You are creating premium travel trivia for an app called BrainTrip.
+
+Generate exactly 5 multiple-choice trivia questions about ${cleanCity}.
+
+This is NOT generic tourist trivia.
+The questions should feel like they were written by someone who actually knows the city.
+
+The trivia should feel:
+- city-specific
+- modern
+- slightly insider
+- fun for travelers
+- medium to medium-hard
+- specific enough that the user learns something useful or memorable
+
+You must diversify the 5 questions across these types:
+1. neighborhood / area vibe
+2. food or drink
+3. nightlife or entertainment
+4. landmark or cultural spot
+5. local experience / hidden gem / travel behavior
+
+Avoid:
+- overly obvious tourist facts
+- the most generic first-result internet trivia
+- textbook phrasing
+- dull history-only questions
+- questions where the answer is too easy to guess immediately
+
+Rules:
+- Exactly 5 questions
+- Exactly 4 answer options per question
+- Wrong answers should be believable
+- correctAnswer must exactly match one of the options
+- funFact should be short, interesting, and specific
+- category must be one of:
+  "Neighborhoods",
+  "Food & Drink",
+  "Nightlife",
+  "Culture & Landmarks",
+  "Local Experience"
 
 Return ONLY valid JSON as an array.
 Do not use markdown.
@@ -37,59 +70,67 @@ Each item must look exactly like:
   "question": "string",
   "options": ["string", "string", "string", "string"],
   "correctAnswer": "string",
-  "funFact": "string"
+  "funFact": "string",
+  "category": "string"
 }
-
-Rules:
-- Make questions city-specific
-- Focus on landmarks, neighborhoods, food, culture, nightlife, and travel experiences
-- Exactly 4 options per question
-- correctAnswer must exactly match one of the options
-- No answer letters like A, B, C, or D
-- No explanations outside the JSON array
 `;
 
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
+    console.log("🔥 Generating trivia for:", cleanCity);
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5-3",
+        messages: [
+          {
+            role: "system",
+            content: "You are a precise JSON generator.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 1,
+      }),
     });
 
-    let text = response.choices[0].message.content || "";
+    const data = await response.json();
 
-    // Remove markdown code fences just in case
-    text = text.replace(/```json\s*/g, "").replace(/```/g, "").trim();
+    const content = data.choices?.[0]?.message?.content;
 
-    let parsed = JSON.parse(text);
+    if (!content) {
+      console.error("❌ No content returned:", data);
+      return res.status(500).json({ error: "No response from AI" });
+    }
 
-    // Safety cleanup in case the model still returns A/B/C/D
-    parsed = parsed.map((q) => {
-      let correctedAnswer = q.correctAnswer;
+    let parsed;
 
-      if (["A", "B", "C", "D"].includes(correctedAnswer)) {
-        const indexMap = { A: 0, B: 1, C: 2, D: 3 };
-        correctedAnswer = q.options[indexMap[correctedAnswer]];
-      }
+    try {
+      parsed = JSON.parse(content);
+    } catch (err) {
+      console.error("❌ JSON parse error:", content);
+      return res.status(500).json({ error: "Invalid JSON from AI" });
+    }
 
-      return {
-        question: q.question,
-        options: q.options,
-        correctAnswer: correctedAnswer,
-        funFact: q.funFact,
-      };
-    });
+    console.log("✅ Trivia generated successfully");
 
     res.json({
-      city,
+      city: cleanCity,
       questions: parsed,
     });
   } catch (error) {
-    console.error("Trivia generation error:", error);
-    res.status(500).json({ error: "Failed to generate trivia" });
+    console.error("❌ Server error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
