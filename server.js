@@ -20,58 +20,71 @@ app.get("/", (req, res) => {
 
 app.post("/trivia", async (req, res) => {
   try {
-    const { city } = req.body ?? {};
+    const { city, mode } = req.body ?? {};
 
     if (!city || typeof city !== "string" || !city.trim()) {
       return res.status(400).json({ error: "City is required" });
     }
 
     const cleanCity = city.trim();
+    const gameMode = mode === "challenge" ? "challenge" : "standard";
 
     const prompt = `
 You are creating premium travel trivia for an app called BrainTrip.
 
-Generate exactly 5 multiple-choice trivia questions about ${cleanCity}.
+City: ${cleanCity}
+Mode: ${gameMode}
 
-This is NOT generic tourist trivia.
-The questions should feel like they were written by someone who actually knows the city.
+Your job is to generate HIGH-QUALITY, NON-REPETITIVE trivia.
 
-The trivia should feel:
-- city-specific
-- modern
-- slightly insider
-- fun for travelers
-- medium to medium-hard
-- specific enough that the user learns something useful or memorable
+-----------------------------------
+DIFFICULTY RULES:
 
-You must diversify the 5 questions across these types:
-1. neighborhood / area vibe
-2. food or drink
-3. nightlife or entertainment
-4. landmark or cultural spot
-5. local experience / hidden gem / travel behavior
+If mode is "standard":
+- Medium difficulty
+- Focus on well-known landmarks, food, neighborhoods, and culture
+- Questions should feel familiar but still interesting
 
-Avoid:
-- overly obvious tourist facts
-- the most generic first-result internet trivia
-- textbook phrasing
-- dull history-only questions
-- questions where the answer is too easy to guess immediately
+If mode is "challenge":
+- Medium to HARD difficulty
+- Focus on hidden gems, niche facts, local behavior, deeper cultural insights
+- Avoid obvious tourist facts entirely
+- Make questions slightly trickier but still fair
+-----------------------------------
 
-Rules:
-- Exactly 5 questions
-- Exactly 4 answer options per question
-- Wrong answers should be believable
-- correctAnswer must exactly match one of the options
-- funFact should be short, interesting, and specific
-- category must be one of:
-  "Neighborhoods",
-  "Food & Drink",
-  "Nightlife",
-  "Culture & Landmarks",
-  "Local Experience"
+QUALITY RULES:
+- Questions must feel like they come from a LOCAL or experienced traveler
+- Avoid generic or overused trivia
+- Avoid repeating common facts across different runs
+- Make each question feel unique and memorable
+- Slightly conversational tone (not textbook)
 
-Return valid JSON only.
+-----------------------------------
+
+STRUCTURE:
+Generate exactly 8 multiple-choice questions.
+
+Each question must include:
+- question
+- 4 answer options
+- correctAnswer (must match one option exactly)
+- funFact (short, interesting, specific)
+- category
+
+-----------------------------------
+
+CATEGORIES (use each at least once):
+- "Neighborhoods"
+- "Food & Drink"
+- "Nightlife"
+- "Culture & Landmarks"
+- "Local Experience"
+
+-----------------------------------
+
+RETURN FORMAT:
+Return ONLY valid JSON.
+
 `;
 
     const response = await client.responses.create({
@@ -98,8 +111,8 @@ Return valid JSON only.
             properties: {
               questions: {
                 type: "array",
-                minItems: 5,
-                maxItems: 5,
+                minItems: 8,
+                maxItems: 8,
                 items: {
                   type: "object",
                   additionalProperties: false,
@@ -178,6 +191,7 @@ Return valid JSON only.
 
     return res.json({
       city: cleanCity,
+      mode: gameMode,
       questions: cleanedQuestions,
     });
   } catch (error) {
