@@ -36,70 +36,88 @@ City: ${cleanCity}
 Mode: ${gameMode}
 
 -----------------------------------
-STRICT QUESTION FOCUS:
+CORE GOAL:
 
-- MOST questions MUST reference REAL, SPECIFIC places:
+This should feel like a FUN, DISCOVERY-BASED TRAVEL GAME — not a quiz.
+
+Questions should feel like:
+"Wait that's actually cool… I didn't know that"
+
+-----------------------------------
+STRICT QUESTION STYLE:
+
+- MOST questions MUST reference REAL places:
+  - specific bars
+  - restaurants
+  - neighborhoods
   - landmarks
   - attractions
-  - neighborhoods
-  - notable venues (bars, restaurants, clubs, etc.)
 
-- Food questions are allowed ONLY if:
-  - the item is iconic to the city
-  - widely recognized (e.g., deep dish pizza in Chicago)
+- Questions should feel like FUN FACTS about places
+- Avoid generic phrasing like "Which of the following..."
+
+- Instead use:
+  - "This iconic Miami beach is known for..."
+  - "This neighborhood is where locals go for..."
+  - "This hidden bar in Miami is famous for..."
 
 -----------------------------------
-STRICT ANSWER FORMAT:
+ANSWER RULES:
 
-- Answers must be SHORT
-- Prefer 1–3 words max
+- Answers must be SHORT (1–3 words ideally)
 - Prefer proper nouns (place names)
-- Examples:
-  - "Central Park"
-  - "Eiffel Tower"
-  - "South Beach"
-
-- DO NOT use full sentences as answers
+- Avoid long phrases or sentences
+- Wrong answers must be believable places
 
 -----------------------------------
-STRICT DIFFICULTY RULES:
+DIFFICULTY RULES:
 
 If mode is "standard":
 - Medium difficulty
-- Focus on well-known places and recognizable locations
-- User should feel: "I might know this"
+- Focus on:
+  - well-known hotspots
+  - famous attractions
+  - popular neighborhoods
+- User should feel: "I've heard of this"
 
 If mode is "challenge":
-- Noticeably harder
-- Focus on:
+- MUST feel noticeably harder
+- Focus ONLY on:
   - hidden gems
-  - niche locations
-  - local-only knowledge
+  - specific venues
+  - local-only spots
+  - niche attractions
 - DO NOT include:
-  - famous landmarks
-  - obvious tourist spots
-- User should feel: "I wouldn’t know this unless I’ve been there"
+  - major tourist landmarks
+  - obvious answers
+- Make guessing harder:
+  - options should be similar types of places
+  - avoid giving away the answer easily
 
 -----------------------------------
-QUALITY RULES:
+ANTI-GUESSING RULE:
 
-- NO generic trivia
-- NO repeated or predictable questions
-- Questions must feel engaging and slightly challenging
-- Each question should feel unique and specific
-- Avoid textbook or robotic phring
-- Keep tone clean and consistent
+Options should be similar in category so users can't guess easily.
+
+Example:
+Bad:
+- Beach / Museum / Food / Park
+
+Good:
+- 4 neighborhoods
+- 4 restaurants
+- 4 nightlife spots
 
 -----------------------------------
 STRUCTURE:
 
-Generate exactly 8 multiple-choice questions.
+Generate exactly 8 questions.
 
 Each question must include:
-- question (clear and engaging)
-- 4 answer options (short + clean)
-- correctAnswer (must exactly match one option)
-- funFact (1 short, interesting sentence)
+- question (engaging, natural tone)
+- options (4 similar-type answers)
+- correctAnswer
+- funFact (short, interesting, place-based)
 - category
 
 -----------------------------------
@@ -114,11 +132,9 @@ CATEGORIES (use each at least once):
 -----------------------------------
 CRITICAL RULE:
 
-Challenge mode questions MUST NOT overlap with standard-level topics.
+Challenge mode questions MUST NOT overlap with standard topics.
 
 -----------------------------------
-RETURN FORMAT:
-
 Return ONLY valid JSON.
 `;
 
@@ -127,14 +143,15 @@ Return ONLY valid JSON.
       input: [
         {
           role: "system",
-          content: "You are a precise JSON generator for a travel trivia app.",
+          content:
+            "You are a precise JSON generator for a travel trivia app. Keep answers short and clean.",
         },
         {
           role: "user",
           content: prompt,
         },
       ],
-      temperature: 1,
+      temperature: 1.1,
       text: {
         format: {
           type: "json_schema",
