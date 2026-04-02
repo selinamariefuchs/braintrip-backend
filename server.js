@@ -5,6 +5,11 @@ import OpenAI from "openai";
 
 dotenv.config();
 
+if (!process.env.OPENAI_API_KEY) {
+  console.error("OPENAI_API_KEY is missing. Set it in .env or env vars.");
+  process.exit(1);
+}
+
 const app = express();
 
 app.use(cors());
@@ -91,12 +96,23 @@ Return JSON format:
                     },
                     correctAnswer: { type: "string" },
                     funFact: { type: "string" },
+                    category: {
+                      type: "string",
+                      enum: [
+                        "Neighborhoods",
+                        "Food & Drink",
+                        "Nightlife",
+                        "Culture & Landmarks",
+                        "Local Experience",
+                      ],
+                    },
                   },
                   required: [
                     "question",
                     "options",
                     "correctAnswer",
                     "funFact",
+                    "category",
                   ],
                 },
               },
@@ -107,21 +123,44 @@ Return JSON format:
       },
     });
 
-    const output = response.output_text;
-    if (!output) {
-      console.error("No output_text returned from OpenAI:", response);
+    console.log("OpenAI raw response:", JSON.stringify(response, null, 2));
+
+    const aiText =
+      response.output_text ||
+      (response.output &&
+        Array.isArray(response.output)
+        ? response.output
+            .map((item) => {
+              if (!item?.content) return "";
+              return item.content
+                .map((c) => {
+                  if (typeof c === "string") return c;
+                  if (c?.type === "output_text") return c.text || "";
+                  if (c?.type === "message" && typeof c.text === "string")
+                    return c.text;
+                  return "";
+                })
+                .join("");
+            })
+            .join("")
+        : "") ||
+      "";
+
+    if (!aiText.trim()) {
+      console.error("No text from OpenAI:", JSON.stringify(response, null, 2));
       return res.status(500).json({ error: "No response from AI" });
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(output);
+      parsed = JSON.parse(aiText);
     } catch (error) {
-      console.error("JSON parse error:", output);
+      console.error("Invalid JSON from AI:", aiText, error);
       return res.status(500).json({ error: "Invalid JSON from AI" });
     }
 
     if (!parsed?.questions || !Array.isArray(parsed.questions)) {
+      console.error("Invalid structure from AI:", parsed);
       return res.status(500).json({ error: "Invalid trivia format from AI" });
     }
 
@@ -138,20 +177,23 @@ Return JSON format:
           options,
           correctAnswer,
           funFact: typeof q.funFact === "string" ? q.funFact : "",
-          category: typeof q.category === "string" ? q.category : "Local Experience",
+          category:
+            typeof q.category === "string" ? q.category : "Local Experience",
         };
       })
-      .filter((q) => q.question && q.options.length === 4 && q.correctAnswer && q.funFact);
+      .filter(
+        (q) =>
+          q.question &&
+          q.options.length === 4 &&
+          q.correctAnswer &&
+          q.funFact)
+      .slice(0, 5);
 
     const uniqueQuestions = cleanedQuestions.filter(
       (q) => !seenQuestions.includes(q.question)
     );
-
-    let finalQuestions = uniqueQuestions;
-    if (finalQuestions.length < 5) {
-      // Fallback: keep unique + available, no duplicates
-      finalQuestions = cleanedQuestions.slice(0, 5);
-    }
+    const finalQuestions =
+      uniqueQuestions.length >= 5 ? uniqueQuestions : cleanedQuestions;
 
     return res.json({
       city: cleanCity,
