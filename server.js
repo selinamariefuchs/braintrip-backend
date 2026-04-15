@@ -1,3 +1,78 @@
+// Landmark identification endpoint for Scan AI
+app.post("/scan", async (req, res) => {
+  try {
+    const { imageBase64, mimeType } = req.body ?? {};
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      return res.status(400).json({ error: "imageBase64 is required" });
+    }
+
+    const prompt = `You are an expert travel guide and landmark identification specialist.
+
+Analyze this image and identify the SPECIFIC named landmark, monument, building, or site shown.
+
+RULES:
+- Give the exact official name of the landmark
+- If you can identify it with high confidence, state the name directly
+- If you are not 100% certain, give your best specific identification with a confidence note
+- NEVER say "likely regional architecture" or vague descriptions — always give a specific name
+- If truly unidentifiable, say what type of landmark it appears to be and where it might be
+
+Return ONLY valid JSON, no markdown:
+{
+  "name": "Exact official landmark name",
+  "location": "City, Country",
+  "confidence": "high/medium/low",
+  "isLandmark": true,
+  "tagline": "One punchy sentence about why this place is legendary",
+  "whyItMatters": "2-3 sentences on why travelers love this place and its cultural significance",
+  "hotFacts": [
+    "Surprising wow-factor fact about this specific landmark that most tourists don't know",
+    "Another fascinating specific fact",
+    "A third hot fact travelers would love"
+  ],
+  "travelerTip": "One specific practical tip for visiting this exact place"
+}
+
+If no landmark is visible return:
+{ "isLandmark": false }`;
+
+    const response = await client.chat.completions.create({
+      model: "gpt-4-vision-preview",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert travel guide and landmark identification specialist.",
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` } },
+          ],
+        },
+      ],
+      max_tokens: 800,
+      temperature: 0.7,
+    });
+
+    let aiText = response.choices?.[0]?.message?.content || "";
+    if (!aiText.trim()) {
+      return res.status(500).json({ error: "No response from AI" });
+    }
+    // Remove markdown if present
+    aiText = aiText.replace(/^```json|```$/g, "").trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(aiText);
+    } catch (error) {
+      return res.status(500).json({ error: "Invalid JSON from AI", raw: aiText });
+    }
+    return res.json(parsed);
+  } catch (error) {
+    console.error("Scan AI error:", error);
+    return res.status(500).json({ error: "Failed to analyze image" });
+  }
+});
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -13,7 +88,7 @@ if (!process.env.OPENAI_API_KEY) {
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
