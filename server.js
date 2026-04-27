@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 
 dotenv.config();
 
@@ -16,8 +18,34 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 const app = express();
 
+// Render runs behind a proxy — needed for accurate IP-based rate limiting
+app.set("trust proxy", 1);
+
+// Security headers (CSP, HSTS, X-Frame-Options, etc.)
+app.use(helmet());
+
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
+
+// ─── Rate limiters ──────────────────────────────────────────
+// Strict limit on AI endpoints (each call costs real money)
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,           // 1 minute
+  max: 10,                        // 10 AI calls per IP per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down and try again in a minute." },
+});
+
+// Looser global limit catches everything else
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(globalLimiter);
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -28,7 +56,7 @@ app.get("/", (req, res) => {
 });
 
 // Landmark identification endpoint for Scan AI
-app.post("/scan", async (req, res) => {
+app.post("/scan", aiLimiter, async (req, res) => {
   try {
     const { imageBase64, mimeType, city } = req.body ?? {};
     if (!imageBase64 || typeof imageBase64 !== "string") {
@@ -112,7 +140,7 @@ If no landmark is visible return:
   }
 });
 
-app.post("/trivia", async (req, res) => {
+app.post("/trivia", aiLimiter, async (req, res) => {
   try {
     const { city, mode, seenQuestions = [] } = req.body ?? {};
 
@@ -295,7 +323,7 @@ Return JSON format:
   }
 });
 
-app.post("/itinerary", async (req, res) => {
+app.post("/itinerary", aiLimiter, async (req, res) => {
   try {
     const { city, category = "all" } = req.body ?? {};
 
@@ -432,7 +460,7 @@ Return exactly 5 spots.
 
 // Generic Anthropic Messages API proxy
 // Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
-app.post("/anthropic/messages", async (req, res) => {
+app.post("/anthropic/messages", aiLimiter, async (req, res) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
