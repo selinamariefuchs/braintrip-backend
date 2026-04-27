@@ -47,6 +47,21 @@ const globalLimiter = rateLimit({
 
 app.use(globalLimiter);
 
+// Health endpoint — not rate-limited, used by Render uptime checks
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
+
+// ─── Anthropic safety guardrails ────────────────────────────
+const ANTHROPIC_MAX_TOKENS_CAP = 4096;       // Hard cap regardless of what client sends
+const ANTHROPIC_MAX_MESSAGES = 50;            // Prevent unbounded context bloating cost
+const ANTHROPIC_REQUEST_TIMEOUT_MS = 60_000;  // Kill requests after 60s
+const ANTHROPIC_ALLOWED_MODELS = new Set([
+  "claude-sonnet-4-20250514",
+  "claude-haiku-4-5-20251001",
+  "claude-haiku-4-5",
+]);
+
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -461,16 +476,32 @@ Return exactly 5 spots.
 // Generic Anthropic Messages API proxy
 // Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
 app.post("/anthropic/messages", aiLimiter, async (req, res) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_REQUEST_TIMEOUT_MS);
+
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: "ANTHROPIC_API_KEY is not configured on the server" });
+      return res.status(500).json({ error: "Service temporarily unavailable" });
     }
 
     const { model, max_tokens, messages } = req.body ?? {};
 
     if (!model || !max_tokens || !messages) {
       return res.status(400).json({ error: "model, max_tokens, and messages are required" });
+    }
+
+    // Guardrail 1: Reject unapproved models (don't let clients call expensive Opus)
+    if (!ANTHROPIC_ALLOWED_MODELS.has(model)) {
+      return res.status(400).json({ error: "Model not allowed" });
+    }
+
+    // Guardrail 2: Cap max_tokens server-side regardless of client value
+    const safeMaxTokens = Math.min(Math.max(1, Number(max_tokens) || 0), ANTHROPIC_MAX_TOKENS_CAP);
+
+    // Guardrail 3: Cap message count to prevent context bloat
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > ANTHROPIC_MAX_MESSAGES) {
+      return res.status(400).json({ error: "Invalid messages array" });
     }
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -480,19 +511,30 @@ app.post("/anthropic/messages", aiLimiter, async (req, res) => {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({ model, max_tokens, messages }),
+      body: JSON.stringify({ model, max_tokens: safeMaxTokens, messages }),
+      signal: controller.signal,
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      return res.status(response.status).json({ error: data.error?.message || "Anthropic API error", details: data });
+      // Don't leak Anthropic's internal error details to clients
+      console.error("Anthropic upstream error:", response.status, data?.error?.message);
+      return res.status(response.status >= 500 ? 502 : response.status).json({
+        error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
+      });
     }
 
     return res.json(data);
   } catch (error) {
-    console.error("Anthropic proxy error:", error);
-    return res.status(500).json({ error: "Failed to proxy request to Anthropic" });
+    if (error?.name === "AbortError") {
+      console.warn("Anthropic request timed out");
+      return res.status(504).json({ error: "Request timed out" });
+    }
+    console.error("Anthropic proxy error:", error?.message || error);
+    return res.status(500).json({ error: "Failed to proxy request" });
+  } finally {
+    clearTimeout(timeoutId);
   }
 });
 
