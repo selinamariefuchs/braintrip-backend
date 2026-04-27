@@ -10,6 +10,10 @@ if (!process.env.OPENAI_API_KEY) {
   process.exit(1);
 }
 
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.warn("⚠️  ANTHROPIC_API_KEY is missing. Anthropic proxy endpoints will not work.");
+}
+
 const app = express();
 
 app.use(cors());
@@ -423,6 +427,44 @@ Return exactly 5 spots.
   } catch (error) {
     console.error("Itinerary generation error:", error);
     return res.status(500).json({ error: "Failed to generate itinerary" });
+  }
+});
+
+// Generic Anthropic Messages API proxy
+// Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
+app.post("/anthropic/messages", async (req, res) => {
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "ANTHROPIC_API_KEY is not configured on the server" });
+    }
+
+    const { model, max_tokens, messages } = req.body ?? {};
+
+    if (!model || !max_tokens || !messages) {
+      return res.status(400).json({ error: "model, max_tokens, and messages are required" });
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({ model, max_tokens, messages }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.error?.message || "Anthropic API error", details: data });
+    }
+
+    return res.json(data);
+  } catch (error) {
+    console.error("Anthropic proxy error:", error);
+    return res.status(500).json({ error: "Failed to proxy request to Anthropic" });
   }
 });
 
