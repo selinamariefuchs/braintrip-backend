@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -14,6 +16,21 @@ if (!process.env.OPENAI_API_KEY) {
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.warn("⚠️  ANTHROPIC_API_KEY is missing. Anthropic proxy endpoints will not work.");
+}
+
+if (!process.env.ELEVENLABS_API_KEY) {
+  console.warn("⚠️  ELEVENLABS_API_KEY is missing. Drive Mode TTS will not work.");
+}
+
+// Supabase admin client for caching TTS audio in Storage
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = (supabaseUrl && supabaseServiceKey)
+  ? createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } })
+  : null;
+
+if (!supabase) {
+  console.warn("⚠️  Supabase service role missing. TTS audio will not be cached (each request will hit ElevenLabs).");
 }
 
 const app = express();
@@ -533,6 +550,150 @@ app.post("/anthropic/messages", aiLimiter, async (req, res) => {
     }
     console.error("Anthropic proxy error:", error?.message || error);
     return res.status(500).json({ error: "Failed to proxy request" });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+});
+
+// ─── ElevenLabs TTS proxy with caching ───────────────────────
+// Used by Drive Mode to read trivia questions / answers / fun facts aloud.
+// Audio is cached in Supabase Storage by content hash to minimize costs.
+
+const TTS_BUCKET = "tts-cache"; // Must be created as a public bucket in Supabase Storage
+const ELEVENLABS_DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"; // "Bella" — warm, conversational
+const TTS_MAX_TEXT_LENGTH = 2000; // Server-side cap
+
+const ttsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30, // Plenty for a quiz session (7 questions × ~3 audio clips each)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many TTS requests. Slow down." },
+});
+
+function ttsCacheKey(text, voiceId) {
+  const hash = crypto.createHash("sha256").update(`${voiceId}:${text}`).digest("hex");
+  return `${hash}.mp3`;
+}
+
+async function getCachedAudio(text, voiceId) {
+  if (!supabase) return null;
+  const fileName = ttsCacheKey(text, voiceId);
+  try {
+    const { data } = supabase.storage.from(TTS_BUCKET).getPublicUrl(fileName);
+    if (!data?.publicUrl) return null;
+    // Check if the file actually exists by attempting a HEAD request
+    const res = await fetch(data.publicUrl, { method: "HEAD" });
+    if (res.ok) return data.publicUrl;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheAudio(text, voiceId, audioBuffer) {
+  if (!supabase) return null;
+  const fileName = ttsCacheKey(text, voiceId);
+  try {
+    const { error } = await supabase.storage
+      .from(TTS_BUCKET)
+      .upload(fileName, audioBuffer, {
+        contentType: "audio/mpeg",
+        upsert: false,
+      });
+    if (error && !error.message.includes("already exists")) {
+      console.warn("[tts] cache upload error:", error.message);
+      return null;
+    }
+    const { data } = supabase.storage.from(TTS_BUCKET).getPublicUrl(fileName);
+    return data?.publicUrl ?? null;
+  } catch (err) {
+    console.warn("[tts] cache upload threw:", err?.message || err);
+    return null;
+  }
+}
+
+app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ error: "TTS unavailable" });
+  }
+
+  const { text, voiceId } = req.body ?? {};
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "text is required" });
+  }
+
+  const safeText = text.slice(0, TTS_MAX_TEXT_LENGTH);
+  const voice = (typeof voiceId === "string" && voiceId.trim()) ? voiceId.trim() : ELEVENLABS_DEFAULT_VOICE;
+
+  // 1. Try cache first
+  try {
+    const cachedUrl = await getCachedAudio(safeText, voice);
+    if (cachedUrl) {
+      return res.json({ url: cachedUrl, cached: true });
+    }
+  } catch {}
+
+  // 2. Generate via ElevenLabs
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json",
+          "Accept": "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text: safeText,
+          model_id: "eleven_turbo_v2_5", // fast + cheap, good quality
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.3,
+            use_speaker_boost: true,
+          },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.error("[tts] ElevenLabs error:", response.status, errText.slice(0, 200));
+      return res.status(response.status >= 500 ? 502 : response.status).json({
+        error: response.status === 401 ? "TTS auth failed" :
+               response.status === 429 ? "TTS rate limited upstream" :
+               "TTS generation failed",
+      });
+    }
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+
+    // 3. Cache for next time (best effort — don't block the response)
+    let publicUrl = null;
+    try {
+      publicUrl = await cacheAudio(safeText, voice, audioBuffer);
+    } catch {}
+
+    if (publicUrl) {
+      return res.json({ url: publicUrl, cached: false });
+    }
+
+    // 4. Cache failed — stream the audio directly
+    res.set("Content-Type", "audio/mpeg");
+    return res.send(audioBuffer);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return res.status(504).json({ error: "TTS request timed out" });
+    }
+    console.error("[tts] error:", error?.message || error);
+    return res.status(500).json({ error: "TTS generation failed" });
   } finally {
     clearTimeout(timeoutId);
   }
