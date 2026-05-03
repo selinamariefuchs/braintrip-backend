@@ -665,11 +665,13 @@ app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      console.error("[tts] ElevenLabs error:", response.status, errText.slice(0, 200));
+      const keyPreview = apiKey ? `${apiKey.slice(0, 6)}...${apiKey.slice(-4)} (len=${apiKey.length})` : 'MISSING';
+      console.error("[tts] ElevenLabs error:", response.status, "voice=", voice, "key=", keyPreview, "body=", errText.slice(0, 400));
       return res.status(response.status >= 500 ? 502 : response.status).json({
         error: response.status === 401 ? "TTS auth failed" :
                response.status === 429 ? "TTS rate limited upstream" :
                "TTS generation failed",
+        debug: errText.slice(0, 300),
       });
     }
 
