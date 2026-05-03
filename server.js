@@ -18,9 +18,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
   console.warn("⚠️  ANTHROPIC_API_KEY is missing. Anthropic proxy endpoints will not work.");
 }
 
-if (!process.env.ELEVENLABS_API_KEY) {
-  console.warn("⚠️  ELEVENLABS_API_KEY is missing. Drive Mode TTS will not work.");
-}
+// Drive Mode TTS uses OpenAI (key already required above)
 
 // Supabase admin client for caching TTS audio in Storage
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -555,12 +553,14 @@ app.post("/anthropic/messages", aiLimiter, async (req, res) => {
   }
 });
 
-// ─── ElevenLabs TTS proxy with caching ───────────────────────
+// ─── OpenAI TTS proxy with caching ───────────────────────
 // Used by Drive Mode to read trivia questions / answers / fun facts aloud.
 // Audio is cached in Supabase Storage by content hash to minimize costs.
 
 const TTS_BUCKET = "tts-cache"; // Must be created as a public bucket in Supabase Storage
-const ELEVENLABS_DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"; // "Bella" — warm, conversational
+const OPENAI_DEFAULT_VOICE = "nova"; // warm, conversational
+const OPENAI_TTS_MODEL = "tts-1-hd"; // higher quality
+const OPENAI_TTS_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
 const TTS_MAX_TEXT_LENGTH = 2000; // Server-side cap
 
 const ttsLimiter = rateLimit({
@@ -571,8 +571,8 @@ const ttsLimiter = rateLimit({
   message: { error: "Too many TTS requests. Slow down." },
 });
 
-function ttsCacheKey(text, voiceId) {
-  const hash = crypto.createHash("sha256").update(`${voiceId}:${text}`).digest("hex");
+function ttsCacheKey(text, voice) {
+  const hash = crypto.createHash("sha256").update(`${OPENAI_TTS_MODEL}:${voice}:${text}`).digest("hex");
   return `${hash}.mp3`;
 }
 
@@ -614,18 +614,19 @@ async function cacheAudio(text, voiceId, audioBuffer) {
 }
 
 app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return res.status(503).json({ error: "TTS unavailable" });
   }
 
-  const { text, voiceId } = req.body ?? {};
+  const { text, voice: voiceParam } = req.body ?? {};
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "text is required" });
   }
 
   const safeText = text.slice(0, TTS_MAX_TEXT_LENGTH);
-  const voice = (typeof voiceId === "string" && voiceId.trim()) ? voiceId.trim() : ELEVENLABS_DEFAULT_VOICE;
+  const requestedVoice = (typeof voiceParam === "string" ? voiceParam.trim().toLowerCase() : "");
+  const voice = OPENAI_TTS_VOICES.has(requestedVoice) ? requestedVoice : OPENAI_DEFAULT_VOICE;
 
   // 1. Try cache first
   try {
@@ -635,29 +636,26 @@ app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
     }
   } catch {}
 
-  // 2. Generate via ElevenLabs
+  // 2. Generate via OpenAI TTS
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
   try {
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voice}`,
+      "https://api.openai.com/v1/audio/speech",
       {
         method: "POST",
         headers: {
-          "xi-api-key": apiKey,
+          "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           "Accept": "audio/mpeg",
         },
         body: JSON.stringify({
-          text: safeText,
-          model_id: "eleven_turbo_v2_5", // fast + cheap, good quality
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.3,
-            use_speaker_boost: true,
-          },
+          model: OPENAI_TTS_MODEL,
+          voice,
+          input: safeText,
+          response_format: "mp3",
+          speed: 1.0,
         }),
         signal: controller.signal,
       }
@@ -665,13 +663,11 @@ app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      const keyPreview = apiKey ? `${apiKey.slice(0, 6)}...${apiKey.slice(-4)} (len=${apiKey.length})` : 'MISSING';
-      console.error("[tts] ElevenLabs error:", response.status, "voice=", voice, "key=", keyPreview, "body=", errText.slice(0, 400));
+      console.error("[tts] OpenAI error:", response.status, "voice=", voice, "body=", errText.slice(0, 400));
       return res.status(response.status >= 500 ? 502 : response.status).json({
         error: response.status === 401 ? "TTS auth failed" :
                response.status === 429 ? "TTS rate limited upstream" :
                "TTS generation failed",
-        debug: errText.slice(0, 300),
       });
     }
 
