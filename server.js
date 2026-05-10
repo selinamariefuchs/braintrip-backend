@@ -62,7 +62,77 @@ const globalLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-// Health endpoint — not rate-limited, used by Render uptime checks
+// ─── Auth middleware ────────────────────────────────────────
+// Validates the Supabase JWT in the Authorization header so AI endpoints
+// can only be called by signed-in BrainTrip users. Without this gate the
+// /anthropic/messages proxy is wide open — anyone with the URL could burn
+// the project's Anthropic credits. Guests skip this gate via a guest token
+// (signed short-lived nonce) issued at app launch — see /guest-token below.
+const GUEST_TOKEN_SECRET = process.env.GUEST_TOKEN_SECRET || "";
+const GUEST_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function verifyGuestToken(token) {
+  if (!GUEST_TOKEN_SECRET || typeof token !== "string") return false;
+  const parts = token.split(".");
+  if (parts.length !== 2) return false;
+  const [payloadB64, sig] = parts;
+  const expected = crypto.createHmac("sha256", GUEST_TOKEN_SECRET).update(payloadB64).digest("hex");
+  if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"))) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    if (typeof payload.exp !== "number") return false;
+    return Date.now() < payload.exp;
+  } catch {
+    return false;
+  }
+}
+
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return res.status(401).json({ error: "Missing Authorization header" });
+  }
+  const token = match[1].trim();
+
+  // 1) Try Supabase JWT (signed-in users)
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data?.user?.id) {
+        req.userId = data.user.id;
+        req.isGuest = false;
+        return next();
+      }
+    } catch {
+      // fall through to guest check
+    }
+  }
+
+  // 2) Try guest token (signed short-lived nonce)
+  if (verifyGuestToken(token)) {
+    req.isGuest = true;
+    return next();
+  }
+
+  return res.status(401).json({ error: "Invalid or expired token" });
+}
+
+// Issue a guest token — used by the app's guest-mode users (those who haven't
+// signed up). 1-hour TTL, HMAC-signed so it can't be forged. The client
+// transparently refreshes when it expires. Rate-limited so this isn't itself
+// abusable.
+app.post("/guest-token", globalLimiter, (req, res) => {
+  if (!GUEST_TOKEN_SECRET) {
+    return res.status(503).json({ error: "Guest mode not configured" });
+  }
+  const payload = { exp: Date.now() + GUEST_TOKEN_TTL_MS, kind: "guest" };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const sig = crypto.createHmac("sha256", GUEST_TOKEN_SECRET).update(payloadB64).digest("hex");
+  res.json({ token: `${payloadB64}.${sig}`, expiresAt: payload.exp });
+});
+
+// Health endpoint — not rate-limited or auth-gated, used by Render uptime checks
 app.get("/health", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
@@ -86,7 +156,7 @@ app.get("/", (req, res) => {
 });
 
 // Landmark identification endpoint for Scan AI
-app.post("/scan", aiLimiter, async (req, res) => {
+app.post("/scan", aiLimiter, requireAuth, async (req, res) => {
   try {
     const { imageBase64, mimeType, city } = req.body ?? {};
     if (!imageBase64 || typeof imageBase64 !== "string") {
@@ -170,7 +240,7 @@ If no landmark is visible return:
   }
 });
 
-app.post("/trivia", aiLimiter, async (req, res) => {
+app.post("/trivia", aiLimiter, requireAuth, async (req, res) => {
   try {
     const { city, mode, seenQuestions = [] } = req.body ?? {};
 
@@ -353,7 +423,7 @@ Return JSON format:
   }
 });
 
-app.post("/itinerary", aiLimiter, async (req, res) => {
+app.post("/itinerary", aiLimiter, requireAuth, async (req, res) => {
   try {
     const { city, category = "all" } = req.body ?? {};
 
@@ -490,7 +560,7 @@ Return exactly 5 spots.
 
 // Generic Anthropic Messages API proxy
 // Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
-app.post("/anthropic/messages", aiLimiter, async (req, res) => {
+app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_REQUEST_TIMEOUT_MS);
 
@@ -613,7 +683,7 @@ async function cacheAudio(text, voiceId, audioBuffer) {
   }
 }
 
-app.post("/tts", aiLimiter, ttsLimiter, async (req, res) => {
+app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return res.status(503).json({ error: "TTS unavailable" });
