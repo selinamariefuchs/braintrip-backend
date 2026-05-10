@@ -71,6 +71,22 @@ app.use(globalLimiter);
 const GUEST_TOKEN_SECRET = process.env.GUEST_TOKEN_SECRET || "";
 const GUEST_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// Graceful-degradation flag. If GUEST_TOKEN_SECRET is not configured, the
+// guest-token issue/verify path can't work — without this fallback the app
+// would hard-fail every AI call for non-signed-in users. We log a loud
+// warning at startup so it's not forgotten, but allow unauthenticated
+// requests through. Once the secret is set in Render, this branch is
+// silently bypassed and full auth gating kicks in.
+const AUTH_OPEN_MODE = !GUEST_TOKEN_SECRET;
+if (AUTH_OPEN_MODE) {
+  console.warn(
+    "⚠️  GUEST_TOKEN_SECRET not set — running in OPEN AUTH MODE.\n" +
+    "    AI endpoints accept unauthenticated requests so the app keeps\n" +
+    "    working. Set GUEST_TOKEN_SECRET in your Render env vars to\n" +
+    "    enable proper auth gating before public launch."
+  );
+}
+
 function verifyGuestToken(token) {
   if (!GUEST_TOKEN_SECRET || typeof token !== "string") return false;
   const parts = token.split(".");
@@ -88,6 +104,14 @@ function verifyGuestToken(token) {
 }
 
 async function requireAuth(req, res, next) {
+  // Open auth mode (env var unset). Allow through, mark as guest. Log only
+  // a debug line to avoid spamming.
+  if (AUTH_OPEN_MODE) {
+    req.isGuest = true;
+    req.authOpenMode = true;
+    return next();
+  }
+
   const header = req.headers.authorization || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   if (!match) {
