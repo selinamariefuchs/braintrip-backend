@@ -925,49 +925,71 @@ async function generatePostcardImage(prompt) {
     throw new Error("REPLICATE_API_TOKEN not configured");
   }
 
-  const res = await fetch(
+  // Step 1: kick off the prediction. Replicate caps `Prefer: wait` at 60s,
+  // so we ask for the max and then poll if it's still processing.
+  const createRes = await fetch(
     `https://api.replicate.com/v1/models/${REPLICATE_MODEL}/predictions`,
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        // Pro takes longer than schnell — bump wait window to 80s.
-        Prefer: "wait=80",
+        Prefer: "wait=60",
       },
       body: JSON.stringify({
         input: {
           prompt,
-          // 5:4 landscape matches our postcard art zone exactly (no cropping
-          // top/bottom when rendered with resizeMode="cover").
           aspect_ratio: "5:4",
           output_format: "png",
           output_quality: 95,
-          // prompt_upsampling and safety_tolerance removed — they triggered
-          // 422 / param-not-supported errors on flux-1.1-pro. The minimum
-          // viable input is just {prompt, aspect_ratio, output_format}.
         },
       }),
     }
   );
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Replicate ${res.status}: ${text.slice(0, 200)}`);
+  if (!createRes.ok) {
+    const text = await createRes.text();
+    throw new Error(`Replicate ${createRes.status}: ${text.slice(0, 300)}`);
   }
 
-  const data = await res.json();
-  // flux-schnell returns an array of URLs in `output` when status=succeeded
-  if (data.status !== "succeeded") {
-    throw new Error(`Replicate prediction status: ${data.status} ${data.error || ""}`);
+  let prediction = await createRes.json();
+
+  // Step 2: if still processing after the 60s wait window, poll until done.
+  // flux-1.1-pro typically completes within the initial wait, but on busy
+  // hours can take longer. Total wait cap = ~150s.
+  const POLL_INTERVAL_MS = 1500;
+  const POLL_DEADLINE = Date.now() + 90_000; // 90s additional poll budget
+
+  while (
+    prediction.status !== "succeeded" &&
+    prediction.status !== "failed" &&
+    prediction.status !== "canceled" &&
+    Date.now() < POLL_DEADLINE
+  ) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    const pollRes = await fetch(prediction.urls?.get || `https://api.replicate.com/v1/predictions/${prediction.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!pollRes.ok) {
+      const text = await pollRes.text();
+      throw new Error(`Replicate poll ${pollRes.status}: ${text.slice(0, 200)}`);
+    }
+    prediction = await pollRes.json();
   }
-  const output = Array.isArray(data.output) ? data.output[0] : data.output;
+
+  if (prediction.status !== "succeeded") {
+    throw new Error(
+      `Replicate prediction did not succeed: status=${prediction.status} error=${prediction.error || "(none)"}`
+    );
+  }
+
+  const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
   if (typeof output !== "string") {
     throw new Error("Replicate returned no output URL");
   }
 
-  // Download the image so we can re-host it in Supabase (so the URL doesn't
-  // expire and we control caching).
+  // Step 3: download the image so we can re-host it in Supabase.
+  // Replicate URLs are time-limited; ours are permanent.
   const imgRes = await fetch(output);
   if (!imgRes.ok) throw new Error(`Failed to download generated image: ${imgRes.status}`);
   const arrayBuf = await imgRes.arrayBuffer();
