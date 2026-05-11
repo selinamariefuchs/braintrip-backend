@@ -791,6 +791,191 @@ app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
   }
 });
 
+// ─── Postcard image generation (Replicate Flux + Supabase cache) ─────
+// Generates a mid-century travel poster (or modernist linework) of a city
+// landmark. Image is cached in Supabase Storage so subsequent requests
+// for the same {city, style} pair return instantly without re-generating.
+//
+// Required env:
+//   REPLICATE_API_TOKEN — required for first-time generation
+//   SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY — required for caching
+//
+// If REPLICATE_API_TOKEN is not set, the endpoint returns 503 and the
+// client falls back to programmatic SVG art (we already built that). So
+// the app keeps working even before this env is configured.
+
+const POSTCARD_BUCKET = "postcards-cache"; // Public bucket in Supabase Storage
+const POSTCARD_PROMPT_VERSION = "v1"; // Bump to invalidate all cached postcards
+
+// Per-city prompt fragments. We constrain style tightly so all generated
+// art reads as the same series. Cities not in this map fall back to a
+// generic prompt — those will look generic; they're best with bespoke text.
+const CITY_PROMPTS = {
+  paris:      { landmark: "the Eiffel Tower with its iconic arched legs and Parisian rooftops", palette: "soft peach, golden sun yellow, dark teal forest green, cream" },
+  tokyo:      { landmark: "a traditional five-tier red pagoda with curved upturned eaves under a rising sun, cherry blossoms scattered in the sky", palette: "deep coral pink, ivory cream, bright sun yellow, dark plum" },
+  "new york": { landmark: "the Manhattan skyline featuring the Empire State Building and the Chrysler Building with its tiered art-deco crown", palette: "warm amber, deep navy, cream, sunset orange" },
+  lisbon:     { landmark: "the Belém Tower with crenellated walls and watchtower keep, the Tagus river in the foreground", palette: "warm gold, terracotta, deep slate blue, cream" },
+  barcelona:  { landmark: "the four iconic spires of Sagrada Familia with their pinecone-shaped Gaudí finials", palette: "coral red, warm gold, deep umber brown, cream" },
+  istanbul:   { landmark: "the Hagia Sophia with its central dome, side half-domes, and four tall minarets framing it", palette: "warm gold, deep navy blue, terracotta, cream" },
+  kyoto:      { landmark: "a path of red torii gates receding into the distance up a mountain at Fushimi Inari shrine", palette: "muted vermilion, soft cream, mountain green, deep brown" },
+  rome:       { landmark: "the Colosseum's iconic oval silhouette with three tiers of arches and the ruined section on one side", palette: "warm golden hour amber, terracotta, deep umber, cream" },
+  london:     { landmark: "Big Ben tower with its illuminated clock face and the gothic Houses of Parliament", palette: "moody grey blue, warm cream, amber gold, deep slate" },
+  dubai:      { landmark: "the Burj Khalifa rising from desert dunes, its tapered stepped silhouette piercing the sky", palette: "warm desert gold, cream, deep amber, soft rose" },
+};
+
+function postcardCacheKey(city, style) {
+  const cleanCity = city.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-");
+  const cleanStyle = style === "modernist" ? "modernist" : "poster";
+  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-${cleanStyle}.webp`;
+}
+
+function buildPostcardPrompt(city, style) {
+  const cityEntry = CITY_PROMPTS[city.toLowerCase().trim()] || {
+    landmark: `the most iconic landmark of ${city}`,
+    palette: "warm sunset gold, terracotta, cream, deep umber",
+  };
+
+  if (style === "modernist") {
+    return `Editorial modernist line illustration of ${cityEntry.landmark}. Style: single-weight ink linework, minimal flat color washes in ${cityEntry.palette}, generous negative space, magazine cover aesthetic, Christoph Niemann meets Saul Bass, clean geometric composition. Vertical 4:5 aspect ratio. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS.`;
+  }
+  return `Mid-century travel poster illustration of ${cityEntry.landmark}. Style: bold flat geometric shapes, limited 4-color palette of ${cityEntry.palette}, vintage screen-printed Risograph aesthetic, Hatch Show Print meets Werkbund, strong vertical composition with iconic silhouette, large soft sun disc. Vertical 4:5 aspect ratio. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS.`;
+}
+
+async function getCachedPostcard(city, style) {
+  if (!supabase) return null;
+  const key = postcardCacheKey(city, style);
+  try {
+    const { data } = supabase.storage.from(POSTCARD_BUCKET).getPublicUrl(key);
+    if (!data?.publicUrl) return null;
+    const head = await fetch(data.publicUrl, { method: "HEAD" });
+    return head.ok ? data.publicUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cachePostcard(city, style, imageBuffer) {
+  if (!supabase) return null;
+  const key = postcardCacheKey(city, style);
+  try {
+    const { error } = await supabase.storage
+      .from(POSTCARD_BUCKET)
+      .upload(key, imageBuffer, {
+        contentType: "image/webp",
+        upsert: true, // overwrite if exists (prompt version bump invalidates)
+      });
+    if (error && !error.message.includes("already exists")) {
+      console.warn("[postcard] cache upload error:", error.message);
+      return null;
+    }
+    const { data } = supabase.storage.from(POSTCARD_BUCKET).getPublicUrl(key);
+    return data?.publicUrl ?? null;
+  } catch (err) {
+    console.warn("[postcard] cache upload threw:", err?.message || err);
+    return null;
+  }
+}
+
+// Replicate's "Prefer: wait" flag blocks for up to N seconds and returns
+// the prediction inline. Way simpler than polling. flux-schnell is fast
+// (~3-5s) and cheap (~$0.003/img); flux-pro is higher quality but slower
+// and ~15x more expensive. Start with schnell, swap to pro if quality
+// isn't there.
+const REPLICATE_MODEL = "black-forest-labs/flux-schnell";
+
+async function generatePostcardImage(prompt) {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) {
+    throw new Error("REPLICATE_API_TOKEN not configured");
+  }
+
+  const res = await fetch(
+    `https://api.replicate.com/v1/models/${REPLICATE_MODEL}/predictions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Prefer: "wait=55",
+      },
+      body: JSON.stringify({
+        input: {
+          prompt,
+          aspect_ratio: "4:5",
+          num_outputs: 1,
+          output_format: "webp",
+          output_quality: 90,
+          go_fast: true,
+        },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Replicate ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  // flux-schnell returns an array of URLs in `output` when status=succeeded
+  if (data.status !== "succeeded") {
+    throw new Error(`Replicate prediction status: ${data.status} ${data.error || ""}`);
+  }
+  const output = Array.isArray(data.output) ? data.output[0] : data.output;
+  if (typeof output !== "string") {
+    throw new Error("Replicate returned no output URL");
+  }
+
+  // Download the image so we can re-host it in Supabase (so the URL doesn't
+  // expire and we control caching).
+  const imgRes = await fetch(output);
+  if (!imgRes.ok) throw new Error(`Failed to download generated image: ${imgRes.status}`);
+  const arrayBuf = await imgRes.arrayBuffer();
+  return Buffer.from(arrayBuf);
+}
+
+app.post("/postcard-image", aiLimiter, requireAuth, async (req, res) => {
+  const { city, style } = req.body ?? {};
+  if (!city || typeof city !== "string" || !city.trim()) {
+    return res.status(400).json({ error: "city is required" });
+  }
+  const styleNormalized = style === "modernist" ? "modernist" : "poster";
+
+  try {
+    // 1) Cache hit?
+    const cached = await getCachedPostcard(city, styleNormalized);
+    if (cached) {
+      return res.json({ url: cached, cached: true });
+    }
+
+    // 2) Generate
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return res.status(503).json({
+        error: "Image generation not configured (REPLICATE_API_TOKEN missing)",
+      });
+    }
+
+    const prompt = buildPostcardPrompt(city, styleNormalized);
+    const imageBuffer = await generatePostcardImage(prompt);
+
+    // 3) Cache and return
+    const publicUrl = await cachePostcard(city, styleNormalized, imageBuffer);
+    if (publicUrl) {
+      return res.json({ url: publicUrl, cached: false });
+    }
+
+    // Cache failed — stream the bytes directly (caller can use them once).
+    res.set("Content-Type", "image/webp");
+    return res.send(imageBuffer);
+  } catch (err) {
+    console.error("[postcard] error:", err?.message || err);
+    if (err?.message?.includes("REPLICATE_API_TOKEN")) {
+      return res.status(503).json({ error: "Image generation not configured" });
+    }
+    return res.status(500).json({ error: "Postcard generation failed" });
+  }
+});
+
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, "0.0.0.0", () => {
