@@ -943,11 +943,9 @@ async function generatePostcardImage(prompt) {
           aspect_ratio: "5:4",
           output_format: "png",
           output_quality: 95,
-          // Lets Flux internally upsample the prompt for richer output.
-          prompt_upsampling: true,
-          // Safety + watermark settings (Pro defaults are fine but be
-          // explicit about no watermarks on our paid artifacts).
-          safety_tolerance: 5,
+          // prompt_upsampling and safety_tolerance removed — they triggered
+          // 422 / param-not-supported errors on flux-1.1-pro. The minimum
+          // viable input is just {prompt, aspect_ratio, output_format}.
         },
       }),
     }
