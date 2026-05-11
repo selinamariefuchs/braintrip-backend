@@ -805,7 +805,7 @@ app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
 // the app keeps working even before this env is configured.
 
 const POSTCARD_BUCKET = "postcards-cache"; // Public bucket in Supabase Storage
-const POSTCARD_PROMPT_VERSION = "v4"; // Bump to invalidate all cached postcards
+const POSTCARD_PROMPT_VERSION = "v5"; // Bump to invalidate all cached postcards
 
 // Tier descriptors — drive the time-of-day + atmosphere progression as the
 // user levels up in a city. The narrative: as you deepen your relationship
@@ -850,7 +850,9 @@ function postcardCacheKey(city, style, level) {
   const cleanCity = city.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-");
   const cleanStyle = style === "modernist" ? "modernist" : "poster";
   const cleanLevel = clampLevel(level);
-  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-L${cleanLevel}-${cleanStyle}.webp`;
+  // .png because flux-1.1-pro outputs PNG (schnell was WebP). Bumping the
+  // version invalidates all previous .webp cache entries automatically.
+  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-L${cleanLevel}-${cleanStyle}.png`;
 }
 
 function buildPostcardPrompt(city, style, level) {
@@ -896,7 +898,7 @@ async function cachePostcard(city, style, level, imageBuffer) {
     const { error } = await supabase.storage
       .from(POSTCARD_BUCKET)
       .upload(key, imageBuffer, {
-        contentType: "image/webp",
+        contentType: "image/png",
         upsert: true, // overwrite if exists (prompt version bump invalidates)
       });
     if (error && !error.message.includes("already exists")) {
@@ -911,12 +913,11 @@ async function cachePostcard(city, style, level, imageBuffer) {
   }
 }
 
-// Replicate's "Prefer: wait" flag blocks for up to N seconds and returns
-// the prediction inline. Way simpler than polling. flux-schnell is fast
-// (~3-5s) and cheap (~$0.003/img); flux-pro is higher quality but slower
-// and ~15x more expensive. Start with schnell, swap to pro if quality
-// isn't there.
-const REPLICATE_MODEL = "black-forest-labs/flux-schnell";
+// Replicate model + input shape. Flux 1.1 Pro produces noticeably better
+// composition + lighting fidelity than Schnell — worth the ~10x cost for
+// a once-per-{city, level, style} cache miss. Generation takes 10-20s
+// instead of 3-5s; the unlock cinematic + collection view hide the wait.
+const REPLICATE_MODEL = "black-forest-labs/flux-1.1-pro";
 
 async function generatePostcardImage(prompt) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -931,20 +932,22 @@ async function generatePostcardImage(prompt) {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        Prefer: "wait=55",
+        // Pro takes longer than schnell — bump wait window to 80s.
+        Prefer: "wait=80",
       },
       body: JSON.stringify({
         input: {
           prompt,
           // 5:4 landscape matches our postcard art zone exactly (no cropping
-          // top/bottom when rendered with resizeMode="cover"). Previously
-          // 4:5 portrait — caused tall landmarks (Eiffel, Burj) to lose
-          // their spires to the top edge of the postcard.
+          // top/bottom when rendered with resizeMode="cover").
           aspect_ratio: "5:4",
-          num_outputs: 1,
-          output_format: "webp",
-          output_quality: 90,
-          go_fast: true,
+          output_format: "png",
+          output_quality: 95,
+          // Lets Flux internally upsample the prompt for richer output.
+          prompt_upsampling: true,
+          // Safety + watermark settings (Pro defaults are fine but be
+          // explicit about no watermarks on our paid artifacts).
+          safety_tolerance: 5,
         },
       }),
     }
