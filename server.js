@@ -805,14 +805,14 @@ app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
 // the app keeps working even before this env is configured.
 
 const POSTCARD_BUCKET = "postcards-cache"; // Public bucket in Supabase Storage
-const POSTCARD_PROMPT_VERSION = "v2"; // Bump to invalidate all cached postcards
+const POSTCARD_PROMPT_VERSION = "v3"; // Bump to invalidate all cached postcards
 
 // Per-city prompt fragments. We constrain style tightly so all generated
 // art reads as the same series. Cities not in this map fall back to a
 // generic prompt — those will look generic; they're best with bespoke text.
 const CITY_PROMPTS = {
-  paris:      { landmark: "the Eiffel Tower with its iconic arched legs and Parisian rooftops", palette: "soft peach, golden sun yellow, dark teal forest green, cream" },
-  tokyo:      { landmark: "a traditional five-tier red pagoda with curved upturned eaves under a rising sun, cherry blossoms scattered in the sky", palette: "deep coral pink, ivory cream, bright sun yellow, dark plum" },
+  paris:      { landmark: "the Eiffel Tower in Paris France, its iconic four arched iron legs visible at the base, with traditional Haussmannian Parisian rooftops below. European architecture only. NOT a Japanese pagoda, NOT cherry blossoms.", palette: "soft peach, golden sun yellow, dark teal forest green, cream" },
+  tokyo:      { landmark: "a traditional Japanese five-story wooden pagoda temple (like Senso-ji or Kiyomizu-dera), with red and white painted wood, curved upturned eaves, ornamental finial spire at top. NOT Tokyo Tower, NOT a metal observation tower, NOT the Eiffel Tower. With cherry blossom branches in the foreground and a rising sun behind.", palette: "deep coral pink, ivory cream, bright sun yellow, dark plum" },
   "new york": { landmark: "the Manhattan skyline featuring the Empire State Building and the Chrysler Building with its tiered art-deco crown", palette: "warm amber, deep navy, cream, sunset orange" },
   lisbon:     { landmark: "the Belém Tower with crenellated walls and watchtower keep, the Tagus river in the foreground", palette: "warm gold, terracotta, deep slate blue, cream" },
   barcelona:  { landmark: "the four iconic spires of Sagrada Familia with their pinecone-shaped Gaudí finials", palette: "coral red, warm gold, deep umber brown, cream" },
@@ -947,17 +947,20 @@ async function generatePostcardImage(prompt) {
 }
 
 app.post("/postcard-image", aiLimiter, requireAuth, async (req, res) => {
-  const { city, style } = req.body ?? {};
+  const { city, style, forceFresh } = req.body ?? {};
   if (!city || typeof city !== "string" || !city.trim()) {
     return res.status(400).json({ error: "city is required" });
   }
   const styleNormalized = style === "modernist" ? "modernist" : "poster";
 
   try {
-    // 1) Cache hit?
-    const cached = await getCachedPostcard(city, styleNormalized);
-    if (cached) {
-      return res.json({ url: cached, cached: true });
+    // 1) Cache hit? (skipped when caller requests a fresh generation —
+    //    the "Regenerate" button or first-time regen after a bad output)
+    if (!forceFresh) {
+      const cached = await getCachedPostcard(city, styleNormalized);
+      if (cached) {
+        return res.json({ url: cached, cached: true });
+      }
     }
 
     // 2) Generate
