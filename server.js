@@ -805,7 +805,7 @@ app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
 // the app keeps working even before this env is configured.
 
 const POSTCARD_BUCKET = "postcards-cache"; // Public bucket in Supabase Storage
-const POSTCARD_PROMPT_VERSION = "v1"; // Bump to invalidate all cached postcards
+const POSTCARD_PROMPT_VERSION = "v2"; // Bump to invalidate all cached postcards
 
 // Per-city prompt fragments. We constrain style tightly so all generated
 // art reads as the same series. Cities not in this map fall back to a
@@ -835,10 +835,18 @@ function buildPostcardPrompt(city, style) {
     palette: "warm sunset gold, terracotta, cream, deep umber",
   };
 
+  // CRITICAL composition guidance:
+  // - "fully visible, centered, generous breathing room above and below"
+  //   prevents the AI from cropping the landmark to the top/bottom edge
+  // - "horizontal landscape composition" matches the postcard art zone
+  //   (~5:4 aspect) so resizeMode="cover" doesn't crop top/bottom
+  // - "landmark occupies the center 60%" gives consistent framing across cities
+  const composition = `The landmark is fully visible and centered, with generous breathing room of sky above its top and foreground/horizon below its base. Landmark occupies the center 55-65% of the frame vertically. Horizontal landscape composition, 5:4 aspect ratio. Iconic silhouette readable at a glance.`;
+
   if (style === "modernist") {
-    return `Editorial modernist line illustration of ${cityEntry.landmark}. Style: single-weight ink linework, minimal flat color washes in ${cityEntry.palette}, generous negative space, magazine cover aesthetic, Christoph Niemann meets Saul Bass, clean geometric composition. Vertical 4:5 aspect ratio. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS.`;
+    return `Editorial modernist line illustration of ${cityEntry.landmark}. ${composition} Style: single-weight ink linework, minimal flat color washes in ${cityEntry.palette}, generous negative space, magazine cover aesthetic, Christoph Niemann meets Saul Bass, clean geometric. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
   }
-  return `Mid-century travel poster illustration of ${cityEntry.landmark}. Style: bold flat geometric shapes, limited 4-color palette of ${cityEntry.palette}, vintage screen-printed Risograph aesthetic, Hatch Show Print meets Werkbund, strong vertical composition with iconic silhouette, large soft sun disc. Vertical 4:5 aspect ratio. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS.`;
+  return `Mid-century travel poster illustration of ${cityEntry.landmark}. ${composition} Style: bold flat geometric shapes, limited 4-color palette of ${cityEntry.palette}, vintage screen-printed Risograph aesthetic, Hatch Show Print meets Werkbund, large soft sun disc in the sky. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
 }
 
 async function getCachedPostcard(city, style) {
@@ -901,7 +909,11 @@ async function generatePostcardImage(prompt) {
       body: JSON.stringify({
         input: {
           prompt,
-          aspect_ratio: "4:5",
+          // 5:4 landscape matches our postcard art zone exactly (no cropping
+          // top/bottom when rendered with resizeMode="cover"). Previously
+          // 4:5 portrait — caused tall landmarks (Eiffel, Burj) to lose
+          // their spires to the top edge of the postcard.
+          aspect_ratio: "5:4",
           num_outputs: 1,
           output_format: "webp",
           output_quality: 90,
