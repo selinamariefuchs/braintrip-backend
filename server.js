@@ -805,7 +805,24 @@ app.post("/tts", aiLimiter, ttsLimiter, requireAuth, async (req, res) => {
 // the app keeps working even before this env is configured.
 
 const POSTCARD_BUCKET = "postcards-cache"; // Public bucket in Supabase Storage
-const POSTCARD_PROMPT_VERSION = "v3"; // Bump to invalidate all cached postcards
+const POSTCARD_PROMPT_VERSION = "v4"; // Bump to invalidate all cached postcards
+
+// Tier descriptors — drive the time-of-day + atmosphere progression as the
+// user levels up in a city. The narrative: as you deepen your relationship
+// with a city, you watch it from noon (level 1, fresh arrival) to midnight
+// (level 8, you know its secrets). Level 7-8 also get programmatic foil
+// embellishments client-side (not part of the AI prompt — those are
+// rendered by LimitedEditionOverlay on the client to keep them consistent).
+const TIER_DESCRIPTORS = {
+  1: "at high noon under bright clear daylight, simple flat 4-color palette, clean confident Risograph poster",
+  2: "in the late morning, with warm sunlight and soft long shadows, slightly painterly poster style",
+  3: "at golden hour with saturated warm coral and amber light, long shadows raking across the scene, glowing atmosphere",
+  4: "at dramatic sunset, the sky deep amber and rose, the landmark silhouetted against the warm horizon, painterly",
+  5: "at twilight blue hour with atmospheric mist, deep navy sky transitioning to gold near the horizon, mysterious quiet mood",
+  6: "at night under a starry sky, the landmark illuminated by golden warm uplighting, distant city lights twinkling, magical atmosphere",
+  7: "at night with the landmark dramatically illuminated, deep navy sky with stars, refined cinematic composition, fine art poster quality",
+  8: "at deep night under aurora-like atmosphere, the landmark illuminated by ethereal golden light from below, ultra-detailed, museum-quality fine art poster, awe-inspiring monumental composition",
+};
 
 // Per-city prompt fragments. We constrain style tightly so all generated
 // art reads as the same series. Cities not in this map fall back to a
@@ -823,17 +840,27 @@ const CITY_PROMPTS = {
   dubai:      { landmark: "the Burj Khalifa rising from desert dunes, its tapered stepped silhouette piercing the sky", palette: "warm desert gold, cream, deep amber, soft rose" },
 };
 
-function postcardCacheKey(city, style) {
-  const cleanCity = city.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-");
-  const cleanStyle = style === "modernist" ? "modernist" : "poster";
-  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-${cleanStyle}.webp`;
+function clampLevel(level) {
+  const n = Number(level);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(8, Math.round(n)));
 }
 
-function buildPostcardPrompt(city, style) {
+function postcardCacheKey(city, style, level) {
+  const cleanCity = city.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-");
+  const cleanStyle = style === "modernist" ? "modernist" : "poster";
+  const cleanLevel = clampLevel(level);
+  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-L${cleanLevel}-${cleanStyle}.webp`;
+}
+
+function buildPostcardPrompt(city, style, level) {
   const cityEntry = CITY_PROMPTS[city.toLowerCase().trim()] || {
     landmark: `the most iconic landmark of ${city}`,
     palette: "warm sunset gold, terracotta, cream, deep umber",
   };
+
+  const lvl = clampLevel(level);
+  const tierMood = TIER_DESCRIPTORS[lvl] || TIER_DESCRIPTORS[1];
 
   // CRITICAL composition guidance:
   // - "fully visible, centered, generous breathing room above and below"
@@ -844,14 +871,14 @@ function buildPostcardPrompt(city, style) {
   const composition = `The landmark is fully visible and centered, with generous breathing room of sky above its top and foreground/horizon below its base. Landmark occupies the center 55-65% of the frame vertically. Horizontal landscape composition, 5:4 aspect ratio. Iconic silhouette readable at a glance.`;
 
   if (style === "modernist") {
-    return `Editorial modernist line illustration of ${cityEntry.landmark}. ${composition} Style: single-weight ink linework, minimal flat color washes in ${cityEntry.palette}, generous negative space, magazine cover aesthetic, Christoph Niemann meets Saul Bass, clean geometric. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
+    return `Editorial modernist line illustration of ${cityEntry.landmark}, ${tierMood}. ${composition} Style: single-weight ink linework, minimal flat color washes in ${cityEntry.palette}, generous negative space, magazine cover aesthetic, Christoph Niemann meets Saul Bass, clean geometric. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
   }
-  return `Mid-century travel poster illustration of ${cityEntry.landmark}. ${composition} Style: bold flat geometric shapes, limited 4-color palette of ${cityEntry.palette}, vintage screen-printed Risograph aesthetic, Hatch Show Print meets Werkbund, large soft sun disc in the sky. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
+  return `Mid-century travel poster illustration of ${cityEntry.landmark}, ${tierMood}. ${composition} Style: bold flat geometric shapes, limited 4-color palette of ${cityEntry.palette}, vintage screen-printed Risograph aesthetic, Hatch Show Print meets Werkbund. NO TEXT, NO LOGOS, NO PEOPLE, NO BORDERS, NO FRAME.`;
 }
 
-async function getCachedPostcard(city, style) {
+async function getCachedPostcard(city, style, level) {
   if (!supabase) return null;
-  const key = postcardCacheKey(city, style);
+  const key = postcardCacheKey(city, style, level);
   try {
     const { data } = supabase.storage.from(POSTCARD_BUCKET).getPublicUrl(key);
     if (!data?.publicUrl) return null;
@@ -862,9 +889,9 @@ async function getCachedPostcard(city, style) {
   }
 }
 
-async function cachePostcard(city, style, imageBuffer) {
+async function cachePostcard(city, style, level, imageBuffer) {
   if (!supabase) return null;
-  const key = postcardCacheKey(city, style);
+  const key = postcardCacheKey(city, style, level);
   try {
     const { error } = await supabase.storage
       .from(POSTCARD_BUCKET)
@@ -947,17 +974,18 @@ async function generatePostcardImage(prompt) {
 }
 
 app.post("/postcard-image", aiLimiter, requireAuth, async (req, res) => {
-  const { city, style, forceFresh } = req.body ?? {};
+  const { city, style, forceFresh, level } = req.body ?? {};
   if (!city || typeof city !== "string" || !city.trim()) {
     return res.status(400).json({ error: "city is required" });
   }
   const styleNormalized = style === "modernist" ? "modernist" : "poster";
+  const levelNormalized = clampLevel(level);
 
   try {
     // 1) Cache hit? (skipped when caller requests a fresh generation —
     //    the "Regenerate" button or first-time regen after a bad output)
     if (!forceFresh) {
-      const cached = await getCachedPostcard(city, styleNormalized);
+      const cached = await getCachedPostcard(city, styleNormalized, levelNormalized);
       if (cached) {
         return res.json({ url: cached, cached: true });
       }
@@ -970,11 +998,11 @@ app.post("/postcard-image", aiLimiter, requireAuth, async (req, res) => {
       });
     }
 
-    const prompt = buildPostcardPrompt(city, styleNormalized);
+    const prompt = buildPostcardPrompt(city, styleNormalized, levelNormalized);
     const imageBuffer = await generatePostcardImage(prompt);
 
     // 3) Cache and return
-    const publicUrl = await cachePostcard(city, styleNormalized, imageBuffer);
+    const publicUrl = await cachePostcard(city, styleNormalized, levelNormalized, imageBuffer);
     if (publicUrl) {
       return res.json({ url: publicUrl, cached: false });
     }
