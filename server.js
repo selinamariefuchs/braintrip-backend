@@ -175,6 +175,10 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+app.get("/app-ads.txt", (req, res) => {
+  res.type("text/plain").send("google.com, pub-4241252919358872, DIRECT, f08c47fec0942fa0\n");
+});
+
 app.get("/", (req, res) => {
   res.send("BrainTrip backend is running 🚀");
 });
@@ -476,7 +480,18 @@ Requirements:
 - Keep descriptions fun and engaging
 - Never include fake or generic places
 
-Return exactly 5 spots.
+For each spot, write a photoPrompt — a creative, specific photo challenge that makes the traveler engage with the place. These should feel like a photographer friend whispering "you HAVE to get this shot." Examples of great prompts:
+- "Capture the view from the observation deck with the river curving below"
+- "Find the mosaic floor in the main hall and snap it before the crowd arrives"
+- "Get the street food sizzling on the grill with steam rising"
+Bad prompts (too generic): "Take a photo here", "Snap a pic at this place"
+
+Also generate 3 bonus hidden challenges — city-wide photo missions not tied to a specific spot. These should be distinctive to ${cleanCity} (local culture, architecture, street life, food scene). Examples:
+- "Find a bodega cat in Manhattan"
+- "Capture the golden light hitting the Seine at dusk"
+- "Photograph the oldest piece of street art you can find in Shoreditch"
+
+Return exactly 5 spots and 3 hidden challenges.
 `;
 
     const response = await client.responses.create({
@@ -522,12 +537,26 @@ Return exactly 5 spots.
                     },
                     description: { type: "string" },
                     whyGo: { type: "string" },
+                    photoPrompt: { type: "string" },
                   },
-                  required: ["name", "type", "description", "whyGo"],
+                  required: ["name", "type", "description", "whyGo", "photoPrompt"],
+                },
+              },
+              hiddenChallenges: {
+                type: "array",
+                minItems: 3,
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    prompt: { type: "string" },
+                  },
+                  required: ["prompt"],
                 },
               },
             },
-            required: ["spots"],
+            required: ["spots", "hiddenChallenges"],
           },
         },
       },
@@ -566,14 +595,21 @@ Return exactly 5 spots.
         type: typeof s.type === "string" ? s.type : "Highlight",
         description: typeof s.description === "string" ? s.description : "",
         whyGo: typeof s.whyGo === "string" ? s.whyGo : "",
+        photoPrompt: typeof s.photoPrompt === "string" ? s.photoPrompt : "",
       }))
       .filter((s) => s.name && s.description && s.whyGo)
       .slice(0, 5);
+
+    const cleanedHidden = (parsed.hiddenChallenges || [])
+      .map((h) => ({ prompt: typeof h.prompt === "string" ? h.prompt : "" }))
+      .filter((h) => h.prompt)
+      .slice(0, 3);
 
     return res.json({
       city: cleanCity,
       category,
       spots: cleanedSpots,
+      hiddenChallenges: cleanedHidden,
     });
 
   } catch (error) {
