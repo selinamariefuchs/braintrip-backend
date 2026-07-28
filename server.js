@@ -235,6 +235,119 @@ app.get("/spot-photo", globalLimiter, async (req, res) => {
   }
 });
 
+// ─── Place search (custom spot picker) ──────────────────────
+// Lets users add a place they already know: resolves free text to up to 5
+// Places candidates with name, address, rating, and a photo served via
+// /photo-ref. Cached per query.
+const PLACE_SEARCH_CACHE = new Map(); // queryLower -> results array
+
+app.get("/place-search", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+  const query = String(req.query.q || "").trim().slice(0, 200);
+  if (!query) return res.status(400).json({ error: "q is required" });
+
+  const cacheKey = query.toLowerCase();
+  const hit = PLACE_SEARCH_CACHE.get(cacheKey);
+  if (hit) return res.json({ results: hit });
+
+  try {
+    const searchRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${key}`
+    );
+    const data = await searchRes.json();
+    const results = (Array.isArray(data?.results) ? data.results : [])
+      .slice(0, 5)
+      .map((r) => ({
+        name: r.name,
+        address: r.formatted_address || "",
+        rating: typeof r.rating === "number" ? r.rating : null,
+        totalRatings: typeof r.user_ratings_total === "number" ? r.user_ratings_total : null,
+        photoRef: r.photos?.[0]?.photo_reference || null,
+      }));
+    PLACE_SEARCH_CACHE.set(cacheKey, results);
+    return res.json({ results });
+  } catch (err) {
+    console.warn("[place-search] failed:", err?.message || err);
+    return res.status(500).json({ error: "Search failed" });
+  }
+});
+
+// Serves a photo by Places photo_reference (from /place-search results).
+const PHOTO_REF_CACHE = new Map(); // ref -> googleusercontent url
+
+app.get("/photo-ref", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+  const ref = String(req.query.ref || "").trim().slice(0, 600);
+  if (!ref) return res.status(400).json({ error: "ref is required" });
+
+  const cached = PHOTO_REF_CACHE.get(ref);
+  if (cached) return res.redirect(302, cached);
+  try {
+    const photoRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=640&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
+      { redirect: "manual" }
+    );
+    const loc = photoRes.headers.get("location");
+    if (!loc) return res.status(404).json({ error: "No photo" });
+    PHOTO_REF_CACHE.set(ref, loc);
+    return res.redirect(302, loc);
+  } catch (err) {
+    return res.status(500).json({ error: "Photo lookup failed" });
+  }
+});
+
+// ─── Spot info: rating + condensed real reviews ─────────────
+// Returns the Google rating and short excerpts from real reviews for a
+// spot — the "why visitors love it" expansion in the app. Cached.
+const SPOT_INFO_CACHE = new Map(); // queryLower -> payload
+
+app.get("/spot-info", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+  const query = String(req.query.q || "").trim().slice(0, 200);
+  if (!query) return res.status(400).json({ error: "q is required" });
+
+  const cacheKey = query.toLowerCase();
+  const hit = SPOT_INFO_CACHE.get(cacheKey);
+  if (hit) return res.json(hit);
+
+  try {
+    const findRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=place_id&key=${key}`
+    );
+    const findData = await findRes.json();
+    const placeId = findData?.candidates?.[0]?.place_id;
+    if (!placeId) return res.status(404).json({ error: "Place not found" });
+
+    const detailsRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=rating,user_ratings_total,reviews&reviews_sort=most_relevant&key=${key}`
+    );
+    const detailsData = await detailsRes.json();
+    const result = detailsData?.result || {};
+    const reviews = (Array.isArray(result.reviews) ? result.reviews : [])
+      .filter((r) => typeof r.text === "string" && r.text.length > 30 && r.rating >= 4)
+      .slice(0, 3)
+      .map((r) => ({
+        rating: r.rating,
+        // First ~180 chars, cut at a sentence/word boundary
+        excerpt: r.text.slice(0, 180).replace(/\s+\S*$/, "") + (r.text.length > 180 ? "…" : ""),
+      }));
+
+    const payload = {
+      rating: typeof result.rating === "number" ? result.rating : null,
+      totalRatings: typeof result.user_ratings_total === "number" ? result.user_ratings_total : null,
+      reviews,
+    };
+    SPOT_INFO_CACHE.set(cacheKey, payload);
+    return res.json(payload);
+  } catch (err) {
+    console.warn("[spot-info] failed:", err?.message || err);
+    return res.status(500).json({ error: "Info lookup failed" });
+  }
+});
+
 // Landmark identification endpoint for Scan AI
 app.post("/scan", aiLimiter, requireAuth, async (req, res) => {
   try {
@@ -527,7 +640,7 @@ ${categoryPrompt}
 
 Requirements:
 - Each spot must be a real specific place
-- Include a compelling reason why travelers love it
+- For whyGo, write a condensed summary of what real visitors consistently praise — the specific things reviewers actually mention (a dish, a view, a time of day, a detail). Written like a distilled Google-reviews overview, e.g. "Visitors rave about the custard tarts straight from the oven and say the line moves faster than it looks" — NEVER generic praise like "a must-see with something for everyone"
 - Mix well known spots with hidden gems
 - Keep descriptions fun and engaging
 - Never include fake or generic places
