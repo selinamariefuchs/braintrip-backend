@@ -298,6 +298,56 @@ app.get("/photo-ref", globalLimiter, async (req, res) => {
   }
 });
 
+// ─── Nearby landmark (daily photo challenge) ────────────────
+// Finds the most prominent tourist attraction within ~2km of the given
+// coordinates. Cached per ~1km grid cell — landmarks don't move.
+const NEARBY_CACHE = new Map(); // cellKey -> landmark | null
+
+app.get("/nearby-landmark", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat and lng are required" });
+  }
+
+  const cellKey = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+  if (NEARBY_CACHE.has(cellKey)) {
+    const hit = NEARBY_CACHE.get(cellKey);
+    return hit ? res.json(hit) : res.status(404).json({ error: "No landmark nearby" });
+  }
+
+  try {
+    const searchRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=2000&type=tourist_attraction&key=${key}`
+    );
+    const data = await searchRes.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    // Most-reviewed = most recognizable target for the challenge.
+    const best = results
+      .filter((r) => (r.user_ratings_total || 0) >= 50)
+      .sort((a, b) => (b.user_ratings_total || 0) - (a.user_ratings_total || 0))[0];
+    if (!best) {
+      NEARBY_CACHE.set(cellKey, null);
+      return res.status(404).json({ error: "No landmark nearby" });
+    }
+    const payload = {
+      name: best.name,
+      vicinity: best.vicinity || "",
+      rating: typeof best.rating === "number" ? best.rating : null,
+      totalRatings: best.user_ratings_total || null,
+      photoRef: best.photos?.[0]?.photo_reference || null,
+    };
+    NEARBY_CACHE.set(cellKey, payload);
+    return res.json(payload);
+  } catch (err) {
+    console.warn("[nearby-landmark] failed:", err?.message || err);
+    return res.status(500).json({ error: "Lookup failed" });
+  }
+});
+
 // ─── Spot info: rating + condensed real reviews ─────────────
 // Returns the Google rating and short excerpts from real reviews for a
 // spot — the "why visitors love it" expansion in the app. Cached.
