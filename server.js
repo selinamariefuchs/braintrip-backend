@@ -183,6 +183,58 @@ app.get("/", (req, res) => {
   res.send("BrainTrip backend is running 🚀");
 });
 
+// ─── Spot photo proxy ───────────────────────────────────────
+// Resolves "spot name, city" → one Google Places photo, redirecting the
+// client to the key-free googleusercontent URL. The API key never leaves
+// the server. Results (including misses) are cached in memory since spot
+// photos are effectively static.
+const SPOT_PHOTO_CACHE = new Map(); // queryLower -> { url: string | null }
+
+app.get("/spot-photo", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+
+  const query = String(req.query.q || "").trim().slice(0, 200);
+  if (!query) return res.status(400).json({ error: "q is required" });
+
+  const cacheKey = query.toLowerCase();
+  const hit = SPOT_PHOTO_CACHE.get(cacheKey);
+  if (hit) {
+    if (!hit.url) return res.status(404).json({ error: "No photo found" });
+    return res.redirect(302, hit.url);
+  }
+
+  try {
+    const findRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=photos&key=${key}`
+    );
+    const findData = await findRes.json();
+    const ref = findData?.candidates?.[0]?.photos?.[0]?.photo_reference;
+    if (!ref) {
+      SPOT_PHOTO_CACHE.set(cacheKey, { url: null });
+      return res.status(404).json({ error: "No photo found" });
+    }
+
+    // The photo endpoint 302s to a googleusercontent URL that doesn't
+    // contain the API key — resolve it and send the client there.
+    const photoRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=640&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
+      { redirect: "manual" }
+    );
+    const loc = photoRes.headers.get("location");
+    if (!loc) {
+      SPOT_PHOTO_CACHE.set(cacheKey, { url: null });
+      return res.status(404).json({ error: "No photo found" });
+    }
+
+    SPOT_PHOTO_CACHE.set(cacheKey, { url: loc });
+    return res.redirect(302, loc);
+  } catch (err) {
+    console.warn("[spot-photo] lookup failed:", err?.message || err);
+    return res.status(500).json({ error: "Photo lookup failed" });
+  }
+});
+
 // Landmark identification endpoint for Scan AI
 app.post("/scan", aiLimiter, requireAuth, async (req, res) => {
   try {
@@ -479,6 +531,9 @@ Requirements:
 - Mix well known spots with hidden gems
 - Keep descriptions fun and engaging
 - Never include fake or generic places
+- For each spot, include the neighborhood or district name (e.g. "Asakusa", "Shibuya", "Le Marais")
+- For each spot, rate the price level: 1 = free, 2 = budget ($1-15), 3 = moderate ($15-50), 4 = expensive ($50+)
+- For each spot, indicate if advance tickets or reservations are typically needed (true/false)
 
 For each spot, write a photoPrompt — a creative, specific photo challenge that makes the traveler engage with the place. These should feel like a photographer friend whispering "you HAVE to get this shot." Examples of great prompts:
 - "Capture the view from the observation deck with the river curving below"
@@ -538,8 +593,11 @@ Return exactly 5 spots and 3 hidden challenges.
                     description: { type: "string" },
                     whyGo: { type: "string" },
                     photoPrompt: { type: "string" },
+                    neighborhood: { type: "string" },
+                    priceLevel: { type: "number", enum: [1, 2, 3, 4] },
+                    ticketsNeeded: { type: "boolean" },
                   },
-                  required: ["name", "type", "description", "whyGo", "photoPrompt"],
+                  required: ["name", "type", "description", "whyGo", "photoPrompt", "neighborhood", "priceLevel", "ticketsNeeded"],
                 },
               },
               hiddenChallenges: {
@@ -596,6 +654,9 @@ Return exactly 5 spots and 3 hidden challenges.
         description: typeof s.description === "string" ? s.description : "",
         whyGo: typeof s.whyGo === "string" ? s.whyGo : "",
         photoPrompt: typeof s.photoPrompt === "string" ? s.photoPrompt : "",
+        neighborhood: typeof s.neighborhood === "string" ? s.neighborhood : "",
+        priceLevel: [1, 2, 3, 4].includes(s.priceLevel) ? s.priceLevel : 1,
+        ticketsNeeded: typeof s.ticketsNeeded === "boolean" ? s.ticketsNeeded : false,
       }))
       .filter((s) => s.name && s.description && s.whyGo)
       .slice(0, 5);
