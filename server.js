@@ -1106,8 +1106,17 @@ function clampLevel(level) {
   return Math.max(1, Math.min(8, Math.round(n)));
 }
 
+// Clients used to send "Kyoto, Japan" for the same city others sent as
+// "Kyoto", which produced two cache objects and two paid Replicate
+// generations for one city — and missed the curated CITY_PROMPTS entry,
+// silently returning generic art. The client now normalizes before
+// sending, but older installs don't, so the server canonicalizes too.
+function bareCityName(city) {
+  return String(city || "").split(",")[0].trim();
+}
+
 function postcardCacheKey(city, style, level) {
-  const cleanCity = city.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-");
+  const cleanCity = bareCityName(city).toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const cleanStyle = style === "modernist" ? "modernist" : "poster";
   const cleanLevel = clampLevel(level);
   // .png because flux-1.1-pro outputs PNG (schnell was WebP). Bumping the
