@@ -1102,7 +1102,7 @@ const CITY_PROMPTS = {
   lisbon:     { landmark: "the Belém Tower with crenellated walls and watchtower keep, the Tagus river in the foreground", palette: "warm gold, terracotta, deep slate blue, cream" },
   barcelona:  { landmark: "the four iconic spires of Sagrada Familia with their pinecone-shaped Gaudí finials", palette: "coral red, warm gold, deep umber brown, cream" },
   istanbul:   { landmark: "the Hagia Sophia with its central dome, side half-domes, and four tall minarets framing it", palette: "warm gold, deep navy blue, terracotta, cream" },
-  kyoto:      { landmark: "a dense tunnel of red-orange torii gates standing shoulder to shoulder along a narrow stone stairway at Fushimi Inari shrine in Kyoto, the gates filling the frame edge to edge and receding into darkness, tall cedar trunks and bamboo pressing close on both sides, the forest canopy closing overhead, no horizon and no distant landscape visible through the trees", palette: "muted vermilion, soft cream, cedar forest green, deep brown" },
+  kyoto:      { landmark: "a dense tunnel of red-orange torii gates along a narrow stone stairway at Fushimi Inari shrine in Kyoto, the gates filling the frame edge to edge and receding into darkness, cedar and bamboo pressing close on both sides beneath a closed forest canopy", palette: "muted vermilion, soft cream, cedar forest green, deep brown" },
   rome:       { landmark: "the Colosseum's iconic oval silhouette with three tiers of arches and the ruined section on one side", palette: "warm golden hour amber, terracotta, deep umber, cream" },
   london:     { landmark: "Big Ben tower with its illuminated clock face and the gothic Houses of Parliament", palette: "moody grey blue, warm cream, amber gold, deep slate" },
   dubai:      { landmark: "the Burj Khalifa rising from desert dunes, its tapered stepped silhouette piercing the sky", palette: "warm desert gold, cream, deep amber, soft rose" },
@@ -1127,9 +1127,10 @@ function bareCityName(city) {
 // instead of moving POSTCARD_PROMPT_VERSION and throwing away every other
 // city's art (each discarded image is a paid regeneration).
 //   kyoto — v5 put Mount Fuji behind the gates; v6's NOT clauses failed
-//   (diffusion models don't honour negation); v7 closes the canopy instead.
+//   (diffusion models don't honour negation); v7 closed the canopy but was
+//   verbose enough to override the tier mood; v8 trims it back.
 const CITY_PROMPT_VERSION = {
-  kyoto: "v7", // v6 still rendered a faint peak; negation does not work here
+  kyoto: "v8", // v7 lost the level-8 night; trimmed so the tier descriptor carries
 };
 
 function postcardCacheKey(city, style, level) {
