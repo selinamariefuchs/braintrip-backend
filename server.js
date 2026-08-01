@@ -661,8 +661,12 @@ Return JSON format:
       questions: finalQuestions,
     });
   } catch (error) {
-    console.error("Trivia generation error:", error);
-    return res.status(500).json({ error: "Failed to generate trivia" });
+    console.error("Trivia generation error:", error?.stack || error);
+    return res.status(500).json({
+      error: "Failed to generate trivia",
+      reason: String(error?.message || error).slice(0, 300),
+      code: error?.status || error?.code || null,
+    });
   }
 });
 
@@ -837,8 +841,12 @@ Return exactly 5 spots and 3 hidden challenges.
     });
 
   } catch (error) {
-    console.error("Itinerary generation error:", error);
-    return res.status(500).json({ error: "Failed to generate itinerary" });
+    console.error("Itinerary generation error:", error?.stack || error);
+    return res.status(500).json({
+      error: "Failed to generate itinerary",
+      reason: String(error?.message || error).slice(0, 300),
+      code: error?.status || error?.code || null,
+    });
   }
 });
 
