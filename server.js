@@ -1102,7 +1102,7 @@ const CITY_PROMPTS = {
   lisbon:     { landmark: "the Belém Tower with crenellated walls and watchtower keep, the Tagus river in the foreground", palette: "warm gold, terracotta, deep slate blue, cream" },
   barcelona:  { landmark: "the four iconic spires of Sagrada Familia with their pinecone-shaped Gaudí finials", palette: "coral red, warm gold, deep umber brown, cream" },
   istanbul:   { landmark: "the Hagia Sophia with its central dome, side half-domes, and four tall minarets framing it", palette: "warm gold, deep navy blue, terracotta, cream" },
-  kyoto:      { landmark: "a path of red torii gates receding into the distance up a mountain at Fushimi Inari shrine", palette: "muted vermilion, soft cream, mountain green, deep brown" },
+  kyoto:      { landmark: "a dense tunnel of red-orange torii gates standing shoulder to shoulder, receding up a stone stairway through a forested hillside at Fushimi Inari shrine in Kyoto, surrounded by tall cedar and bamboo on low wooded slopes. NOT Mount Fuji, NOT a snow-capped conical volcano, NOT any distant mountain peak on the horizon, NOT cherry blossoms.", palette: "muted vermilion, soft cream, cedar forest green, deep brown" },
   rome:       { landmark: "the Colosseum's iconic oval silhouette with three tiers of arches and the ruined section on one side", palette: "warm golden hour amber, terracotta, deep umber, cream" },
   london:     { landmark: "Big Ben tower with its illuminated clock face and the gothic Houses of Parliament", palette: "moody grey blue, warm cream, amber gold, deep slate" },
   dubai:      { landmark: "the Burj Khalifa rising from desert dunes, its tapered stepped silhouette piercing the sky", palette: "warm desert gold, cream, deep amber, soft rose" },
@@ -1123,13 +1123,22 @@ function bareCityName(city) {
   return String(city || "").split(",")[0].trim();
 }
 
+// Per-city cache version. Bump one city here when only its prompt changed,
+// instead of moving POSTCARD_PROMPT_VERSION and throwing away every other
+// city's art (each discarded image is a paid regeneration).
+//   kyoto v6 — v5 kept putting Mount Fuji behind the Fushimi Inari gates.
+const CITY_PROMPT_VERSION = {
+  kyoto: "v6",
+};
+
 function postcardCacheKey(city, style, level) {
   const cleanCity = bareCityName(city).toLowerCase().replace(/[^a-z0-9-]/g, "-");
   const cleanStyle = style === "modernist" ? "modernist" : "poster";
   const cleanLevel = clampLevel(level);
   // .png because flux-1.1-pro outputs PNG (schnell was WebP). Bumping the
   // version invalidates all previous .webp cache entries automatically.
-  return `${POSTCARD_PROMPT_VERSION}/${cleanCity}-L${cleanLevel}-${cleanStyle}.png`;
+  const version = CITY_PROMPT_VERSION[cleanCity] || POSTCARD_PROMPT_VERSION;
+  return `${version}/${cleanCity}-L${cleanLevel}-${cleanStyle}.png`;
 }
 
 function buildPostcardPrompt(city, style, level) {
