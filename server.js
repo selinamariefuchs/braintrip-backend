@@ -1097,7 +1097,7 @@ const TIER_DESCRIPTORS = {
 // generic prompt — those will look generic; they're best with bespoke text.
 const CITY_PROMPTS = {
   paris:      { landmark: "the Eiffel Tower in Paris France, its iconic four arched iron legs visible at the base, with traditional Haussmannian Parisian rooftops below. European architecture only. NOT a Japanese pagoda, NOT cherry blossoms.", palette: "soft peach, golden sun yellow, dark teal forest green, cream" },
-  tokyo:      { landmark: "a traditional Japanese five-story wooden pagoda temple (like Senso-ji or Kiyomizu-dera), with red and white painted wood, curved upturned eaves, ornamental finial spire at top. NOT Tokyo Tower, NOT a metal observation tower, NOT the Eiffel Tower. With cherry blossom branches in the foreground and a rising sun behind.", palette: "deep coral pink, ivory cream, bright sun yellow, dark plum" },
+  tokyo:      { landmark: "the five-story vermilion pagoda of Senso-ji temple in Asakusa Tokyo, red and white painted wood with curved upturned eaves and an ornamental finial spire, rising above the temple's tiled roofs with the great red paper lantern of the Kaminarimon gate below it, dense flat city rooftops stretching unbroken to a low distant horizon", palette: "deep coral pink, ivory cream, bright sun yellow, dark plum" },
   "new york": { landmark: "the Manhattan skyline featuring the Empire State Building and the Chrysler Building with its tiered art-deco crown", palette: "warm amber, deep navy, cream, sunset orange" },
   lisbon:     { landmark: "the Belém Tower with crenellated walls and watchtower keep, the Tagus river in the foreground", palette: "warm gold, terracotta, deep slate blue, cream" },
   barcelona:  { landmark: "the four iconic spires of Sagrada Familia with their pinecone-shaped Gaudí finials", palette: "coral red, warm gold, deep umber brown, cream" },
@@ -1130,6 +1130,7 @@ function bareCityName(city) {
 //   (diffusion models don't honour negation); v7 closed the canopy but was
 //   verbose enough to override the tier mood; v8 trims it back.
 const CITY_PROMPT_VERSION = {
+  tokyo: "v2", // v1 named Kiyomizu-dera (a Kyoto temple) and drew Kyoto
   kyoto: "v8", // v7 lost the level-8 night; trimmed so the tier descriptor carries
 };
 
