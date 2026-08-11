@@ -700,7 +700,9 @@ Requirements:
 - Never include fake or generic places
 - For each spot, include the neighborhood or district name (e.g. "Asakusa", "Shibuya", "Le Marais")
 - For each spot, rate the price level: 1 = free, 2 = budget ($1-15), 3 = moderate ($15-50), 4 = expensive ($50+)
-- For each spot, indicate if advance tickets or reservations are typically needed (true/false)
+- ticketsNeeded: true ONLY when admission itself requires buying a ticket or booking a timed entry slot in advance — museums with timed entry, observation decks, guided tours, theatre or shows, attractions that sell out. A place you can simply walk into is false, no matter how popular or expensive it is.
+- reservationRecommended: true when it is a restaurant, bar or cafe where booking a table ahead is genuinely advisable. This is NOT a ticket.
+- A restaurant is almost never ticketsNeeded. A museum is almost never reservationRecommended. Most parks, streets, markets and viewpoints are false for both.
 
 For each spot, write a photoPrompt — a creative, specific photo challenge that makes the traveler engage with the place. These should feel like a photographer friend whispering "you HAVE to get this shot." Examples of great prompts:
 - "Capture the view from the observation deck with the river curving below"
@@ -763,8 +765,9 @@ Return exactly 5 spots and 3 hidden challenges.
                     neighborhood: { type: "string" },
                     priceLevel: { type: "number", enum: [1, 2, 3, 4] },
                     ticketsNeeded: { type: "boolean" },
+                    reservationRecommended: { type: "boolean" },
                   },
-                  required: ["name", "type", "description", "whyGo", "photoPrompt", "neighborhood", "priceLevel", "ticketsNeeded"],
+                  required: ["name", "type", "description", "whyGo", "photoPrompt", "neighborhood", "priceLevel", "ticketsNeeded", "reservationRecommended"],
                 },
               },
               hiddenChallenges: {
@@ -824,6 +827,8 @@ Return exactly 5 spots and 3 hidden challenges.
         neighborhood: typeof s.neighborhood === "string" ? s.neighborhood : "",
         priceLevel: [1, 2, 3, 4].includes(s.priceLevel) ? s.priceLevel : 1,
         ticketsNeeded: typeof s.ticketsNeeded === "boolean" ? s.ticketsNeeded : false,
+        reservationRecommended:
+          typeof s.reservationRecommended === "boolean" ? s.reservationRecommended : false,
       }))
       .filter((s) => s.name && s.description && s.whyGo)
       .slice(0, 5);
