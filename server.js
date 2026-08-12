@@ -301,6 +301,138 @@ app.get("/photo-ref", globalLimiter, async (req, res) => {
 // ─── Nearby landmark (daily photo challenge) ────────────────
 // Finds the most prominent tourist attraction within ~2km of the given
 // coordinates. Cached per ~1km grid cell — landmarks don't move.
+// ─── Around me: real nearby places, by category and radius ──────────────
+//
+// Every result here comes from Google Places. Nothing is model-generated,
+// deliberately: a landmark that doesn't exist is a bad recommendation, but
+// an invented boat rental is someone driving to a pier for a business that
+// was never there. Activities are the category most worth having and the
+// least safe to hallucinate, so they are sourced, not written.
+//
+// Legacy Nearby Search takes a single type per call, and has no type at all
+// for things like boat hire or carriage rides — so each category fans out
+// across several typed and keyword searches and the results are merged on
+// place_id.
+const AROUND_CATEGORIES = {
+  attractions: [
+    { type: "tourist_attraction" },
+    { type: "museum" },
+    { type: "art_gallery" },
+    { type: "park" },
+  ],
+  activities: [
+    { type: "amusement_park" },
+    { type: "aquarium" },
+    { type: "zoo" },
+    { keyword: "boat tour" },
+    { keyword: "boat rental" },
+    { keyword: "kayak rental" },
+    { keyword: "bike rental" },
+    { keyword: "guided tour" },
+    { keyword: "horse carriage ride" },
+  ],
+  food: [{ type: "restaurant" }, { type: "cafe" }, { type: "bar" }],
+};
+
+const AROUND_CACHE = new Map(); // cell|radius|category -> payload
+const AROUND_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function metersBetween(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+app.get("/around-me", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const radius = Math.max(500, Math.min(50000, Number(req.query.radius) || 2000));
+  const category = String(req.query.category || "attractions");
+  const queries = AROUND_CATEGORIES[category];
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat and lng are required" });
+  }
+  if (!queries) {
+    return res.status(400).json({
+      error: "Unknown category",
+      allowed: Object.keys(AROUND_CATEGORIES),
+    });
+  }
+
+  // ~1km cell: fine enough that results stay relevant, coarse enough that
+  // walking around doesn't re-bill every Places call.
+  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)}|${radius}|${category}`;
+  const hit = AROUND_CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.at < AROUND_CACHE_TTL_MS) {
+    return res.json({ ...hit.payload, cached: true });
+  }
+
+  try {
+    const settled = await Promise.allSettled(
+      queries.map((q) => {
+        const param = q.type
+          ? `type=${encodeURIComponent(q.type)}`
+          : `keyword=${encodeURIComponent(q.keyword)}`;
+        return fetch(
+          `https://maps.googleapis.com/maps/api/place/nearbysearch/json` +
+            `?location=${lat},${lng}&radius=${radius}&${param}&key=${key}`
+        ).then((r) => r.json());
+      })
+    );
+
+    const byId = new Map();
+    for (const outcome of settled) {
+      if (outcome.status !== "fulfilled") continue;
+      for (const r of outcome.value?.results || []) {
+        if (!r?.place_id || byId.has(r.place_id)) continue;
+        if (r.business_status && r.business_status !== "OPERATIONAL") continue;
+        const plat = r.geometry?.location?.lat;
+        const plng = r.geometry?.location?.lng;
+        if (!Number.isFinite(plat) || !Number.isFinite(plng)) continue;
+        byId.set(r.place_id, {
+          placeId: r.place_id,
+          name: r.name,
+          vicinity: r.vicinity || r.formatted_address || "",
+          rating: typeof r.rating === "number" ? r.rating : null,
+          totalRatings: r.user_ratings_total || 0,
+          priceLevel: typeof r.price_level === "number" ? r.price_level : null,
+          photoRef: r.photos?.[0]?.photo_reference || null,
+          lat: plat,
+          lng: plng,
+          distanceMeters: metersBetween(lat, lng, plat, plng),
+          openNow: r.opening_hours?.open_now ?? null,
+        });
+      }
+    }
+
+    // A handful of ratings is the difference between a real destination and
+    // somebody's mislabelled shopfront.
+    const places = Array.from(byId.values())
+      .filter((p) => p.totalRatings >= 5)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .slice(0, 40);
+
+    const payload = { category, radius, count: places.length, places };
+    AROUND_CACHE.set(cacheKey, { at: Date.now(), payload });
+    return res.json(payload);
+  } catch (err) {
+    console.warn("[around-me] failed:", err?.stack || err);
+    return res.status(500).json({
+      error: "Lookup failed",
+      reason: String(err?.message || err).slice(0, 200),
+    });
+  }
+});
+
 const NEARBY_CACHE = new Map(); // cellKey -> landmark | null
 
 app.get("/nearby-landmark", globalLimiter, async (req, res) => {
