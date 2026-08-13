@@ -832,7 +832,7 @@ app.post("/itinerary", aiLimiter, requireAuth, async (req, res) => {
       ? "Focus on restaurants, cafes, and food experiences only."
       : category === "things-to-do"
       ? "Focus on activities, experiences, and things to do only."
-      : "Mix iconic landmarks, local food spots, and hidden gems equally.";
+      : "Mix iconic landmarks, local food spots, and lesser known finds equally.";
 
     const prompt = `
 Generate 5 must-visit spots for ${cleanCity}.
@@ -841,7 +841,8 @@ ${categoryPrompt}
 Requirements:
 - Each spot must be a real specific place
 - For whyGo, write a condensed summary of what real visitors consistently praise — the specific things reviewers actually mention (a dish, a view, a time of day, a detail). Written like a distilled Google-reviews overview, e.g. "Visitors rave about the custard tarts straight from the oven and say the line moves faster than it looks" — NEVER generic praise like "a must-see with something for everyone"
-- Mix well known spots with hidden gems
+- Mix well known spots with lesser known ones
+- hiddenGem: true when a place is genuinely off the usual tourist trail — somewhere a local would send a friend, not something on the first page of every guidebook. This is independent of type: a backstreet restaurant is Food & Drink AND a hidden gem. Of 5 spots, expect roughly 1-2 to be true. Never mark a famous landmark true.
 - Keep descriptions fun and engaging
 - Never include fake or generic places
 - For each spot, include the neighborhood or district name (e.g. "Asakusa", "Shibuya", "Le Marais")
@@ -895,16 +896,21 @@ Return exactly 5 spots and 3 hidden challenges.
                   additionalProperties: false,
                   properties: {
                     name: { type: "string" },
+                    // What the place IS. How well-known it is lives in
+                    // hiddenGem, because those are different questions and a
+                    // single field made the model choose between them — a
+                    // backstreet ramen bar had to give up being food to be a
+                    // secret.
                     type: {
                       type: "string",
                       enum: [
                         "Landmark",
                         "Food & Drink",
-                        "Hidden Gem",
                         "Experience",
                         "Culture",
                       ],
                     },
+                    hiddenGem: { type: "boolean" },
                     description: { type: "string" },
                     whyGo: { type: "string" },
                     photoPrompt: { type: "string" },
@@ -913,7 +919,7 @@ Return exactly 5 spots and 3 hidden challenges.
                     ticketsNeeded: { type: "boolean" },
                     reservationRecommended: { type: "boolean" },
                   },
-                  required: ["name", "type", "description", "whyGo", "photoPrompt", "neighborhood", "priceLevel", "ticketsNeeded", "reservationRecommended"],
+                  required: ["name", "type", "hiddenGem", "description", "whyGo", "photoPrompt", "neighborhood", "priceLevel", "ticketsNeeded", "reservationRecommended"],
                 },
               },
               hiddenChallenges: {
@@ -966,7 +972,10 @@ Return exactly 5 spots and 3 hidden challenges.
     const cleanedSpots = parsed.spots
       .map((s) => ({
         name: typeof s.name === "string" ? s.name : "",
-        type: typeof s.type === "string" ? s.type : "Highlight",
+        type: typeof s.type === "string" ? s.type : "Landmark",
+        // This normaliser rebuilds each spot from a fixed field list, so a
+        // field missing here is dropped no matter what the schema demands.
+        hiddenGem: typeof s.hiddenGem === "boolean" ? s.hiddenGem : false,
         description: typeof s.description === "string" ? s.description : "",
         whyGo: typeof s.whyGo === "string" ? s.whyGo : "",
         photoPrompt: typeof s.photoPrompt === "string" ? s.photoPrompt : "",
