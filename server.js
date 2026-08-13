@@ -637,13 +637,21 @@ ${Array.isArray(seenQuestions) ? seenQuestions.join("\n") : ""}
 - Avoid common tourist facts
 - Make them engaging and surprising
 
+- Each question must name the real, physical place it concerns in "place" —
+  the exact name a visitor would see on a sign or find in Maps ("Sagrada
+  Família", "Fushimi Inari Taisha", "Billy Goat Tavern"). This is how the
+  app tells someone standing nearby that they already learned about it.
+- If a question is about the city as a whole and no single place fits, set
+  "place" to an empty string rather than inventing somewhere.
+
 Return JSON format:
 [
   {
     "question": "...",
     "options": ["A", "B", "C", "D"],
     "correctAnswer": "...",
-    "funFact": "..."
+    "funFact": "...",
+    "place": "Sagrada Família"
   }
 ]
 `;
@@ -688,6 +696,7 @@ Return JSON format:
                     },
                     correctAnswer: { type: "string" },
                     funFact: { type: "string" },
+                    place: { type: "string" },
                     category: {
                       type: "string",
                       enum: [
@@ -704,6 +713,7 @@ Return JSON format:
                     "options",
                     "correctAnswer",
                     "funFact",
+                    "place",
                     "category",
                   ],
                 },
