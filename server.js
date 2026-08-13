@@ -779,6 +779,10 @@ Return JSON format:
           options,
           correctAnswer,
           funFact: typeof q.funFact === "string" ? q.funFact : "",
+          // The normaliser rebuilds each question from scratch, so anything
+          // not named here is silently dropped on the way out — which is how
+          // place went missing between the schema and the response.
+          place: typeof q.place === "string" ? q.place.trim() : "",
           category:
             typeof q.category === "string" ? q.category : "Local Experience",
         };
