@@ -318,36 +318,87 @@ app.get("/photo-ref", globalLimiter, async (req, res) => {
 // for things like boat hire or carriage rides — so each category fans out
 // across several typed and keyword searches and the results are merged on
 // place_id.
+// What there is to do, as a traveller would name it.
+//
+// `idea` is the thing being chosen between. `commodity` marks the ones where
+// the vendors are interchangeable — you want a boat, or pizza, not a
+// particular operator — so the app can collapse them into one row. A museum
+// is not interchangeable: there is one, and it is the destination.
+//
+// These are deliberately long and served a page at a time. Every entry is a
+// separate Google call, so running all of them on first paint would be slow
+// and expensive; the app asks for the next page when the reader reaches the
+// end of the list, which is also the only point at which they are wanted.
 const AROUND_CATEGORIES = {
-  // Attractions are singular by nature — there is one Art Institute — so
-  // none of these are marked commodity.
   attractions: [
-    { type: "tourist_attraction", idea: "Attraction" },
     { type: "museum", idea: "Museum" },
+    { type: "tourist_attraction", idea: "Attraction" },
     { type: "art_gallery", idea: "Gallery" },
     { type: "park", idea: "Park" },
+    { keyword: "observation deck", idea: "Observation deck" },
+    { keyword: "historic landmark", idea: "Historic landmark" },
+    { keyword: "botanical garden", idea: "Botanical garden" },
+    { keyword: "monument", idea: "Monument" },
+    { keyword: "cathedral", idea: "Cathedral" },
+    { keyword: "scenic viewpoint", idea: "Viewpoint" },
+    { type: "library", idea: "Library" },
+    { keyword: "public art", idea: "Public art" },
+    { keyword: "historic theatre", idea: "Historic theatre" },
+    { keyword: "market hall", idea: "Market hall" },
   ],
-  // `idea` is the thing a traveller is choosing between. `commodity` marks
-  // the ones where the vendors are interchangeable — you want a boat, not a
-  // particular boat company — so the app can collapse them into one row.
-  // Aquariums and zoos are not: there is one, and it's the destination.
   activities: [
+    { keyword: "boat rental", idea: "Rent a boat", commodity: true },
+    { keyword: "bike rental", idea: "Rent a bike", commodity: true },
+    { keyword: "guided walking tour", idea: "Walking tour", commodity: true },
+    { keyword: "boat tour", idea: "Boat tour", commodity: true },
+    { keyword: "kayak rental", idea: "Rent a kayak", commodity: true },
+    { keyword: "segway tour", idea: "Segway tour", commodity: true },
+    { keyword: "brewery tour", idea: "Brewery tour", commodity: true },
+    { keyword: "food tour", idea: "Food tour", commodity: true },
+    { keyword: "escape room", idea: "Escape room", commodity: true },
+    { keyword: "comedy club", idea: "Comedy show", commodity: true },
+    { keyword: "live music venue", idea: "Live music", commodity: true },
+    { keyword: "rooftop bar", idea: "Rooftop bar", commodity: true },
+    { keyword: "cooking class", idea: "Cooking class", commodity: true },
+    { type: "spa", idea: "Spa", commodity: true },
+    { type: "bowling_alley", idea: "Bowling", commodity: true },
+    { type: "movie_theater", idea: "Cinema", commodity: true },
+    { keyword: "mini golf", idea: "Mini golf", commodity: true },
+    { keyword: "arcade", idea: "Arcade", commodity: true },
+    { keyword: "helicopter tour", idea: "Helicopter tour", commodity: true },
+    { keyword: "horse carriage ride", idea: "Carriage ride", commodity: true },
     { type: "amusement_park", idea: "Amusement park" },
     { type: "aquarium", idea: "Aquarium" },
     { type: "zoo", idea: "Zoo" },
-    { keyword: "boat tour", idea: "Boat tour", commodity: true },
-    { keyword: "boat rental", idea: "Rent a boat", commodity: true },
-    { keyword: "kayak rental", idea: "Rent a kayak", commodity: true },
-    { keyword: "bike rental", idea: "Rent a bike", commodity: true },
-    { keyword: "guided tour", idea: "Guided tour", commodity: true },
-    { keyword: "horse carriage ride", idea: "Carriage ride", commodity: true },
+    { type: "stadium", idea: "Stadium" },
   ],
+  // Food groups by what you feel like eating, which is the actual decision.
+  // "Restaurant" as one row containing forty places would be no better than
+  // the flat list it replaced.
   food: [
-    { type: "restaurant", idea: "Restaurant" },
-    { type: "cafe", idea: "Café" },
-    { type: "bar", idea: "Bar" },
+    { keyword: "coffee", idea: "Coffee", commodity: true },
+    { keyword: "pizza", idea: "Pizza", commodity: true },
+    { keyword: "brunch", idea: "Brunch", commodity: true },
+    { keyword: "sushi", idea: "Sushi", commodity: true },
+    { keyword: "tacos", idea: "Tacos", commodity: true },
+    { keyword: "burgers", idea: "Burgers", commodity: true },
+    { keyword: "ramen", idea: "Ramen", commodity: true },
+    { keyword: "bakery", idea: "Bakery", commodity: true },
+    { keyword: "cocktail bar", idea: "Cocktails", commodity: true },
+    { keyword: "brewery", idea: "Brewery", commodity: true },
+    { keyword: "seafood", idea: "Seafood", commodity: true },
+    { keyword: "steakhouse", idea: "Steakhouse", commodity: true },
+    { keyword: "thai food", idea: "Thai", commodity: true },
+    { keyword: "italian restaurant", idea: "Italian", commodity: true },
+    { keyword: "barbecue", idea: "Barbecue", commodity: true },
+    { keyword: "ice cream", idea: "Ice cream", commodity: true },
+    { keyword: "vegetarian restaurant", idea: "Vegetarian", commodity: true },
+    { keyword: "wine bar", idea: "Wine bar", commodity: true },
   ],
 };
+
+/** Searches run per request. More ideas cost more Google calls and latency. */
+const AROUND_PAGE_SIZE = 6;
 
 const AROUND_CACHE = new Map(); // cell|radius|category -> payload
 const AROUND_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -371,12 +422,21 @@ app.get("/around-me", globalLimiter, async (req, res) => {
   const lng = Number(req.query.lng);
   const radius = Math.max(500, Math.min(50000, Number(req.query.radius) || 2000));
   const category = String(req.query.category || "attractions");
-  const queries = AROUND_CATEGORIES[category];
+  const allQueries = AROUND_CATEGORIES[category];
+  // Which slice of the idea list to run. The reader asks for the next one on
+  // reaching the end of what they have.
+  const page = Math.max(0, Math.min(20, Number(req.query.page) || 0));
+  const queries = Array.isArray(allQueries)
+    ? allQueries.slice(page * AROUND_PAGE_SIZE, (page + 1) * AROUND_PAGE_SIZE)
+    : allQueries;
+  const hasMore = Array.isArray(allQueries)
+    ? (page + 1) * AROUND_PAGE_SIZE < allQueries.length
+    : false;
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: "lat and lng are required" });
   }
-  if (!queries) {
+  if (!allQueries) {
     return res.status(400).json({
       error: "Unknown category",
       allowed: Object.keys(AROUND_CATEGORIES),
@@ -385,7 +445,7 @@ app.get("/around-me", globalLimiter, async (req, res) => {
 
   // ~1km cell: fine enough that results stay relevant, coarse enough that
   // walking around doesn't re-bill every Places call.
-  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)}|${radius}|${category}`;
+  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)}|${radius}|${category}|${page}`;
   const hit = AROUND_CACHE.get(cacheKey);
   if (hit && Date.now() - hit.at < AROUND_CACHE_TTL_MS) {
     return res.json({ ...hit.payload, cached: true });
@@ -441,9 +501,11 @@ app.get("/around-me", globalLimiter, async (req, res) => {
     const places = Array.from(byId.values())
       .filter((p) => p.totalRatings >= 5)
       .sort((a, b) => a.distanceMeters - b.distanceMeters)
-      .slice(0, 40);
+      // Generous: the app groups interchangeable vendors into one row, so a
+      // large number of results becomes a small number of ideas.
+      .slice(0, 80);
 
-    const payload = { category, radius, count: places.length, places };
+    const payload = { category, radius, page, hasMore, count: places.length, places };
     AROUND_CACHE.set(cacheKey, { at: Date.now(), payload });
     return res.json(payload);
   } catch (err) {
