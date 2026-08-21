@@ -504,7 +504,7 @@ app.get("/spot-info", globalLimiter, async (req, res) => {
     if (!placeId) return res.status(404).json({ error: "Place not found" });
 
     const detailsRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=rating,user_ratings_total,reviews&reviews_sort=most_relevant&key=${key}`
+      `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=name,rating,user_ratings_total,reviews,editorial_summary,types,url,website,formatted_address,price_level,current_opening_hours&reviews_sort=most_relevant&key=${key}`
     );
     const detailsData = await detailsRes.json();
     const result = detailsData?.result || {};
@@ -517,9 +517,27 @@ app.get("/spot-info", globalLimiter, async (req, res) => {
         excerpt: r.text.slice(0, 180).replace(/\s+\S*$/, "") + (r.text.length > 180 ? "…" : ""),
       }));
 
+    // Every field has to be named here as well as in the request — this
+    // object IS the response, so anything omitted is silently dropped no
+    // matter what Google sent. That is how `place` went missing from trivia.
     const payload = {
+      name: typeof result.name === "string" ? result.name : null,
       rating: typeof result.rating === "number" ? result.rating : null,
       totalRatings: typeof result.user_ratings_total === "number" ? result.user_ratings_total : null,
+      // Google's own one-line description of the place, where it has one.
+      summary: typeof result.editorial_summary?.overview === "string"
+        ? result.editorial_summary.overview
+        : null,
+      types: Array.isArray(result.types) ? result.types : [],
+      address: typeof result.formatted_address === "string" ? result.formatted_address : null,
+      priceLevel: typeof result.price_level === "number" ? result.price_level : null,
+      openNow: result.current_opening_hours?.open_now ?? null,
+      hoursToday: Array.isArray(result.current_opening_hours?.weekday_text)
+        ? result.current_opening_hours.weekday_text[(new Date().getDay() + 6) % 7] || null
+        : null,
+      website: typeof result.website === "string" ? result.website : null,
+      /** The canonical Google Maps page for this place. */
+      mapsUrl: typeof result.url === "string" ? result.url : null,
       reviews,
     };
     SPOT_INFO_CACHE.set(cacheKey, payload);
