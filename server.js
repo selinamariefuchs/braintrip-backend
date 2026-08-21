@@ -397,6 +397,161 @@ const AROUND_CATEGORIES = {
   ],
 };
 
+// What this particular city is for.
+//
+// The generic list is the same in Reykjavik as in Bangkok, which is exactly
+// what a travel app should not feel like. These lead the first page for the
+// city you are standing in, so Chicago opens with deep dish and an
+// architecture boat tour rather than "Rent a bike".
+//
+// They are keywords, not content: the results still come from Google, so an
+// idea that finds nothing simply doesn't appear. Nothing here can invent a
+// restaurant.
+const CITY_IDEAS = {
+  chicago: [
+    { keyword: "deep dish pizza", idea: "Deep dish", commodity: true, category: "food" },
+    { keyword: "italian beef sandwich", idea: "Italian beef", commodity: true, category: "food" },
+    { keyword: "blues club", idea: "Blues club", commodity: true, category: "activities" },
+    { keyword: "architecture river cruise", idea: "Architecture cruise", commodity: true, category: "activities" },
+  ],
+  tokyo: [
+    { keyword: "ramen", idea: "Ramen", commodity: true, category: "food" },
+    { keyword: "izakaya", idea: "Izakaya", commodity: true, category: "food" },
+    { keyword: "conveyor belt sushi", idea: "Conveyor sushi", commodity: true, category: "food" },
+    { keyword: "karaoke", idea: "Karaoke", commodity: true, category: "activities" },
+  ],
+  kyoto: [
+    { keyword: "matcha tea house", idea: "Matcha house", commodity: true, category: "food" },
+    { keyword: "kaiseki", idea: "Kaiseki", commodity: true, category: "food" },
+    { keyword: "temple garden", idea: "Temple garden", category: "attractions" },
+    { keyword: "kimono rental", idea: "Rent a kimono", commodity: true, category: "activities" },
+  ],
+  paris: [
+    { keyword: "patisserie", idea: "Patisserie", commodity: true, category: "food" },
+    { keyword: "bistro", idea: "Bistro", commodity: true, category: "food" },
+    { keyword: "wine cave tasting", idea: "Wine tasting", commodity: true, category: "activities" },
+  ],
+  "new york": [
+    { keyword: "bagels", idea: "Bagels", commodity: true, category: "food" },
+    { keyword: "pizza slice", idea: "Slice shop", commodity: true, category: "food" },
+    { keyword: "jazz club", idea: "Jazz club", commodity: true, category: "activities" },
+    { keyword: "jewish deli", idea: "Deli", commodity: true, category: "food" },
+  ],
+  lisbon: [
+    { keyword: "pastel de nata", idea: "Pastel de nata", commodity: true, category: "food" },
+    { keyword: "fado house", idea: "Fado", commodity: true, category: "activities" },
+    { keyword: "miradouro viewpoint", idea: "Miradouro", category: "attractions" },
+  ],
+  barcelona: [
+    { keyword: "tapas", idea: "Tapas", commodity: true, category: "food" },
+    { keyword: "vermouth bar", idea: "Vermut", commodity: true, category: "food" },
+    { keyword: "gaudi building", idea: "Gaudí building", category: "attractions" },
+  ],
+  rome: [
+    { keyword: "gelato", idea: "Gelato", commodity: true, category: "food" },
+    { keyword: "trattoria", idea: "Trattoria", commodity: true, category: "food" },
+    { keyword: "roman ruins", idea: "Roman ruins", category: "attractions" },
+  ],
+  london: [
+    { keyword: "pub", idea: "Pub", commodity: true, category: "food" },
+    { keyword: "afternoon tea", idea: "Afternoon tea", commodity: true, category: "food" },
+    { keyword: "curry house", idea: "Curry house", commodity: true, category: "food" },
+  ],
+  istanbul: [
+    { keyword: "turkish bath hammam", idea: "Hammam", commodity: true, category: "activities" },
+    { keyword: "meze restaurant", idea: "Meze", commodity: true, category: "food" },
+    { keyword: "turkish coffee", idea: "Turkish coffee", commodity: true, category: "food" },
+  ],
+  bangkok: [
+    { keyword: "street food", idea: "Street food", commodity: true, category: "food" },
+    { keyword: "thai massage", idea: "Thai massage", commodity: true, category: "activities" },
+    { keyword: "night market", idea: "Night market", commodity: true, category: "activities" },
+  ],
+  "mexico city": [
+    { keyword: "tacos al pastor", idea: "Al pastor", commodity: true, category: "food" },
+    { keyword: "mezcaleria", idea: "Mezcal bar", commodity: true, category: "food" },
+    { keyword: "mercado", idea: "Mercado", commodity: true, category: "activities" },
+  ],
+  "buenos aires": [
+    { keyword: "parrilla", idea: "Parrilla", commodity: true, category: "food" },
+    { keyword: "tango show", idea: "Tango", commodity: true, category: "activities" },
+    { keyword: "empanadas", idea: "Empanadas", commodity: true, category: "food" },
+  ],
+  marrakech: [
+    { keyword: "hammam", idea: "Hammam", commodity: true, category: "activities" },
+    { keyword: "tagine restaurant", idea: "Tagine", commodity: true, category: "food" },
+    { keyword: "souk", idea: "Souk", commodity: true, category: "activities" },
+  ],
+  amsterdam: [
+    { keyword: "brown cafe", idea: "Brown café", commodity: true, category: "food" },
+    { keyword: "canal cruise", idea: "Canal cruise", commodity: true, category: "activities" },
+    { keyword: "stroopwafel", idea: "Stroopwafel", commodity: true, category: "food" },
+  ],
+  berlin: [
+    { keyword: "currywurst", idea: "Currywurst", commodity: true, category: "food" },
+    { keyword: "biergarten", idea: "Biergarten", commodity: true, category: "food" },
+    { keyword: "doner kebab", idea: "Döner", commodity: true, category: "food" },
+  ],
+  reykjavik: [
+    { keyword: "geothermal pool", idea: "Geothermal pool", commodity: true, category: "activities" },
+    { keyword: "hot dog stand", idea: "Hot dog stand", commodity: true, category: "food" },
+    { keyword: "seafood soup", idea: "Seafood soup", commodity: true, category: "food" },
+  ],
+  "cape town": [
+    { keyword: "wine tasting", idea: "Wine tasting", commodity: true, category: "activities" },
+    { keyword: "braai", idea: "Braai", commodity: true, category: "food" },
+  ],
+  "rio de janeiro": [
+    { keyword: "churrascaria", idea: "Churrascaria", commodity: true, category: "food" },
+    { keyword: "acai bowl", idea: "Açaí", commodity: true, category: "food" },
+    { keyword: "samba club", idea: "Samba", commodity: true, category: "activities" },
+  ],
+  sydney: [
+    { keyword: "flat white coffee", idea: "Flat white", commodity: true, category: "food" },
+    { keyword: "coastal walk", idea: "Coastal walk", category: "attractions" },
+    { keyword: "seafood market", idea: "Seafood market", commodity: true, category: "food" },
+  ],
+  singapore: [
+    { keyword: "hawker centre", idea: "Hawker centre", commodity: true, category: "food" },
+    { keyword: "chilli crab", idea: "Chilli crab", commodity: true, category: "food" },
+    { keyword: "kaya toast", idea: "Kaya toast", commodity: true, category: "food" },
+  ],
+  mumbai: [
+    { keyword: "street chaat", idea: "Chaat", commodity: true, category: "food" },
+    { keyword: "thali restaurant", idea: "Thali", commodity: true, category: "food" },
+    { keyword: "irani cafe", idea: "Irani café", commodity: true, category: "food" },
+  ],
+  dubai: [
+    { keyword: "shawarma", idea: "Shawarma", commodity: true, category: "food" },
+    { keyword: "desert safari", idea: "Desert safari", commodity: true, category: "activities" },
+    { keyword: "gold souk", idea: "Souk", commodity: true, category: "activities" },
+  ],
+  bali: [
+    { keyword: "warung", idea: "Warung", commodity: true, category: "food" },
+    { keyword: "beach club", idea: "Beach club", commodity: true, category: "activities" },
+    { keyword: "yoga studio", idea: "Yoga", commodity: true, category: "activities" },
+  ],
+  phuket: [
+    { keyword: "thai massage", idea: "Thai massage", commodity: true, category: "activities" },
+    { keyword: "beach club", idea: "Beach club", commodity: true, category: "activities" },
+    { keyword: "night market", idea: "Night market", commodity: true, category: "activities" },
+  ],
+  santorini: [
+    { keyword: "greek taverna", idea: "Taverna", commodity: true, category: "food" },
+    { keyword: "sunset viewpoint", idea: "Sunset spot", category: "attractions" },
+    { keyword: "winery tasting", idea: "Winery", commodity: true, category: "activities" },
+  ],
+};
+
+/** The city's own ideas for this category, if we know the city. */
+function cityIdeasFor(city, category) {
+  if (!city) return [];
+  const key = String(city).trim().toLowerCase();
+  const all = CITY_IDEAS[key];
+  if (!Array.isArray(all)) return [];
+  return all.filter((i) => i.category === category);
+}
+
 /** Searches run per request. More ideas cost more Google calls and latency. */
 const AROUND_PAGE_SIZE = 6;
 
@@ -422,7 +577,15 @@ app.get("/around-me", globalLimiter, async (req, res) => {
   const lng = Number(req.query.lng);
   const radius = Math.max(500, Math.min(50000, Number(req.query.radius) || 2000));
   const category = String(req.query.category || "attractions");
-  const allQueries = AROUND_CATEGORIES[category];
+  // The reverse-geocoded city, so the list can lead with what this place is
+  // actually known for.
+  const city = String(req.query.city || "").trim().slice(0, 80);
+  const generic = AROUND_CATEGORIES[category];
+  // City ideas go first: they are the reason to open the app here rather
+  // than a maps app, so they should not be on page three.
+  const allQueries = Array.isArray(generic)
+    ? [...cityIdeasFor(city, category), ...generic]
+    : generic;
   // Which slice of the idea list to run. The reader asks for the next one on
   // reaching the end of what they have.
   const page = Math.max(0, Math.min(20, Number(req.query.page) || 0));
@@ -436,7 +599,7 @@ app.get("/around-me", globalLimiter, async (req, res) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: "lat and lng are required" });
   }
-  if (!allQueries) {
+  if (!generic) {
     return res.status(400).json({
       error: "Unknown category",
       allowed: Object.keys(AROUND_CATEGORIES),
@@ -445,7 +608,8 @@ app.get("/around-me", globalLimiter, async (req, res) => {
 
   // ~1km cell: fine enough that results stay relevant, coarse enough that
   // walking around doesn't re-bill every Places call.
-  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)}|${radius}|${category}|${page}`;
+  const cacheKey =
+    `${lat.toFixed(2)},${lng.toFixed(2)}|${radius}|${category}|${page}|${city.toLowerCase()}`;
   const hit = AROUND_CACHE.get(cacheKey);
   if (hit && Date.now() - hit.at < AROUND_CACHE_TTL_MS) {
     return res.json({ ...hit.payload, cached: true });
@@ -505,7 +669,10 @@ app.get("/around-me", globalLimiter, async (req, res) => {
       // large number of results becomes a small number of ideas.
       .slice(0, 80);
 
-    const payload = { category, radius, page, hasMore, count: places.length, places };
+    const payload = {
+      category, radius, page, hasMore, count: places.length, places,
+      cityIdeas: cityIdeasFor(city, category).map((i) => i.idea),
+    };
     AROUND_CACHE.set(cacheKey, { at: Date.now(), payload });
     return res.json(payload);
   } catch (err) {
