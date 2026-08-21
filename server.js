@@ -319,24 +319,34 @@ app.get("/photo-ref", globalLimiter, async (req, res) => {
 // across several typed and keyword searches and the results are merged on
 // place_id.
 const AROUND_CATEGORIES = {
+  // Attractions are singular by nature — there is one Art Institute — so
+  // none of these are marked commodity.
   attractions: [
-    { type: "tourist_attraction" },
-    { type: "museum" },
-    { type: "art_gallery" },
-    { type: "park" },
+    { type: "tourist_attraction", idea: "Attraction" },
+    { type: "museum", idea: "Museum" },
+    { type: "art_gallery", idea: "Gallery" },
+    { type: "park", idea: "Park" },
   ],
+  // `idea` is the thing a traveller is choosing between. `commodity` marks
+  // the ones where the vendors are interchangeable — you want a boat, not a
+  // particular boat company — so the app can collapse them into one row.
+  // Aquariums and zoos are not: there is one, and it's the destination.
   activities: [
-    { type: "amusement_park" },
-    { type: "aquarium" },
-    { type: "zoo" },
-    { keyword: "boat tour" },
-    { keyword: "boat rental" },
-    { keyword: "kayak rental" },
-    { keyword: "bike rental" },
-    { keyword: "guided tour" },
-    { keyword: "horse carriage ride" },
+    { type: "amusement_park", idea: "Amusement park" },
+    { type: "aquarium", idea: "Aquarium" },
+    { type: "zoo", idea: "Zoo" },
+    { keyword: "boat tour", idea: "Boat tour", commodity: true },
+    { keyword: "boat rental", idea: "Rent a boat", commodity: true },
+    { keyword: "kayak rental", idea: "Rent a kayak", commodity: true },
+    { keyword: "bike rental", idea: "Rent a bike", commodity: true },
+    { keyword: "guided tour", idea: "Guided tour", commodity: true },
+    { keyword: "horse carriage ride", idea: "Carriage ride", commodity: true },
   ],
-  food: [{ type: "restaurant" }, { type: "cafe" }, { type: "bar" }],
+  food: [
+    { type: "restaurant", idea: "Restaurant" },
+    { type: "cafe", idea: "Café" },
+    { type: "bar", idea: "Bar" },
+  ],
 };
 
 const AROUND_CACHE = new Map(); // cell|radius|category -> payload
@@ -395,7 +405,12 @@ app.get("/around-me", globalLimiter, async (req, res) => {
     );
 
     const byId = new Map();
-    for (const outcome of settled) {
+    // Which search produced each result. This was being discarded, which is
+    // why six boat companies arrived as six unrelated rows — the grouping
+    // the app wants was already in the request and thrown away on the way out.
+    for (let qi = 0; qi < settled.length; qi++) {
+      const outcome = settled[qi];
+      const q = queries[qi] || {};
       if (outcome.status !== "fulfilled") continue;
       for (const r of outcome.value?.results || []) {
         if (!r?.place_id || byId.has(r.place_id)) continue;
@@ -415,6 +430,8 @@ app.get("/around-me", globalLimiter, async (req, res) => {
           lng: plng,
           distanceMeters: metersBetween(lat, lng, plat, plng),
           openNow: r.opening_hours?.open_now ?? null,
+          idea: q.idea || null,
+          commodity: q.commodity === true,
         });
       }
     }
