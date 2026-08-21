@@ -279,7 +279,12 @@ const PHOTO_REF_CACHE = new Map(); // ref -> googleusercontent url
 app.get("/photo-ref", globalLimiter, async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) return res.status(503).json({ error: "Places not configured" });
-  const ref = String(req.query.ref || "").trim().slice(0, 600);
+  // Google's photo references have no documented maximum and vary widely —
+  // measured 431 to 650 characters across one Chicago search. The old 600
+  // cap silently truncated the longest ones into invalid references, which
+  // came back as a 404 and rendered as a grey square. Still bounded, just
+  // above anything Google actually sends.
+  const ref = String(req.query.ref || "").trim().slice(0, 4000);
   if (!ref) return res.status(400).json({ error: "ref is required" });
 
   const cached = PHOTO_REF_CACHE.get(ref);
