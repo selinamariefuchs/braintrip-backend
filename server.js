@@ -1337,11 +1337,28 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       // detail and is safe to pass on. Without it a 400 is unfalsifiable
       // from outside the host.
       const upstreamType = typeof data?.error?.type === "string" ? data.error.type : null;
+      // Match against known causes rather than passing the message through.
+      // Each entry is a phrase Anthropic uses; the value is what it means for
+      // whoever has to fix it. Anything unmatched stays "upstream" and is
+      // only in the logs.
+      const KNOWN = [
+        ["credit balance", "credit"],
+        ["insufficient", "credit"],
+        ["quota", "credit"],
+        ["api key", "auth"],
+        ["authentication", "auth"],
+        ["permission", "auth"],
+        ["model", "model"],
+        ["max_tokens", "max_tokens"],
+        ["messages", "messages"],
+        ["rate", "rate_limited"],
+        ["overloaded", "overloaded"],
+      ];
+      const matched = KNOWN.find(([phrase]) => upstreamMsg.includes(phrase));
       const reason =
         response.status === 401 || response.status === 403 ? "auth"
         : response.status === 429 ? "rate_limited"
-        : upstreamMsg.includes("credit") || upstreamMsg.includes("balance") ? "credit"
-        : upstreamMsg.includes("model") ? "model"
+        : matched ? matched[1]
         : "upstream";
       return res.status(response.status >= 500 ? 502 : response.status).json({
         reason,
