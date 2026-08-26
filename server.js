@@ -1332,6 +1332,11 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       // is to read Render's logs. This says which, without leaking anything
       // Anthropic returned.
       const upstreamMsg = String(data?.error?.message || "").toLowerCase();
+      // Anthropic's error `type` is a fixed enum — authentication_error,
+      // invalid_request_error, not_found_error — so it carries no account
+      // detail and is safe to pass on. Without it a 400 is unfalsifiable
+      // from outside the host.
+      const upstreamType = typeof data?.error?.type === "string" ? data.error.type : null;
       const reason =
         response.status === 401 || response.status === 403 ? "auth"
         : response.status === 429 ? "rate_limited"
@@ -1340,6 +1345,7 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
         : "upstream";
       return res.status(response.status >= 500 ? 502 : response.status).json({
         reason,
+        upstreamType,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
       });
     }
