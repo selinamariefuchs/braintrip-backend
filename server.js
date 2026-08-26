@@ -1326,7 +1326,20 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
     if (!response.ok) {
       // Don't leak Anthropic's internal error details to clients
       console.error("Anthropic upstream error:", response.status, data?.error?.message);
+      // A coarse cause, though. "Upstream service error" alone is
+      // undiagnosable from outside — the app's whole trivia feature can be
+      // down and the only way to tell an expired key from an unknown model
+      // is to read Render's logs. This says which, without leaking anything
+      // Anthropic returned.
+      const upstreamMsg = String(data?.error?.message || "").toLowerCase();
+      const reason =
+        response.status === 401 || response.status === 403 ? "auth"
+        : response.status === 429 ? "rate_limited"
+        : upstreamMsg.includes("credit") || upstreamMsg.includes("balance") ? "credit"
+        : upstreamMsg.includes("model") ? "model"
+        : "upstream";
       return res.status(response.status >= 500 ? 502 : response.status).json({
+        reason,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
       });
     }
