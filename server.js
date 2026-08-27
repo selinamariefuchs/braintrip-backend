@@ -1325,7 +1325,16 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
 
     if (!response.ok) {
       // Don't leak Anthropic's internal error details to clients
-      console.error("Anthropic upstream error:", response.status, data?.error?.message);
+      // A per-failure id, logged and returned. Searching the host's logs for
+      // "Anthropic upstream error" keeps landing on historical entries, and a
+      // stale line sent this investigation down two wrong paths already. This
+      // makes one specific failure findable.
+      const traceId = crypto.randomUUID().slice(0, 8);
+      console.error(
+        `Anthropic upstream error [${traceId}]:`,
+        response.status,
+        data?.error?.message
+      );
       // A coarse cause, though. "Upstream service error" alone is
       // undiagnosable from outside — the app's whole trivia feature can be
       // down and the only way to tell an expired key from an unknown model
@@ -1377,6 +1386,7 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
           : null,
       };
       return res.status(response.status >= 500 ? 502 : response.status).json({
+        traceId,
         reason,
         upstreamType,
         sentShape,
