@@ -1321,7 +1321,17 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       signal: controller.signal,
     });
 
-    const data = await response.json();
+    // Keep the raw text too. response.json() on a non-JSON body throws or
+    // yields something unrecognisable, and an empty error.message with a
+    // populated error.type is not a shape Anthropic returns — which suggests
+    // what came back may not be from Anthropic at all.
+    const rawBody = await response.text();
+    let data;
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      data = null;
+    }
 
     if (!response.ok) {
       // Don't leak Anthropic's internal error details to clients
@@ -1372,6 +1382,20 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       // The shape of our OWN request, so a failure is diagnosable without
       // reading the host's logs and without echoing anything Anthropic sent.
       // Field names, types and counts only — no message content.
+      // The structure of the reply, not its contents: which keys came back
+      // and how long the body was. Enough to tell an Anthropic error from an
+      // edge proxy's, without echoing anything either of them wrote.
+      const replyShape = {
+        bodyLength: rawBody.length,
+        topLevelKeys: data && typeof data === "object" ? Object.keys(data) : null,
+        errorKeys:
+          data && typeof data.error === "object" && data.error
+            ? Object.keys(data.error)
+            : null,
+        messageLength:
+          typeof data?.error?.message === "string" ? data.error.message.length : null,
+        contentType: response.headers.get("content-type"),
+      };
       const sentShape = {
         model,
         maxTokens: safeMaxTokens,
@@ -1390,6 +1414,7 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
         reason,
         upstreamType,
         sentShape,
+        replyShape,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
       });
     }
