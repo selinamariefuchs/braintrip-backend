@@ -1360,9 +1360,26 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
         : response.status === 429 ? "rate_limited"
         : matched ? matched[1]
         : "upstream";
+      // The shape of our OWN request, so a failure is diagnosable without
+      // reading the host's logs and without echoing anything Anthropic sent.
+      // Field names, types and counts only — no message content.
+      const sentShape = {
+        model,
+        maxTokens: safeMaxTokens,
+        maxTokensType: typeof safeMaxTokens,
+        messageCount: Array.isArray(messages) ? messages.length : null,
+        contentKind: Array.isArray(messages) && messages[0]
+          ? (typeof messages[0].content === "string"
+              ? "string"
+              : Array.isArray(messages[0].content)
+                ? `blocks:${messages[0].content.map((b) => b?.type).join(",")}`
+                : typeof messages[0].content)
+          : null,
+      };
       return res.status(response.status >= 500 ? 502 : response.status).json({
         reason,
         upstreamType,
+        sentShape,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
       });
     }
