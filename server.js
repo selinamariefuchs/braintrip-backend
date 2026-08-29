@@ -286,7 +286,7 @@ app.get("/place-search", globalLimiter, async (req, res) => {
 });
 
 // Serves a photo by Places photo_reference (from /place-search results).
-const PHOTO_REF_CACHE = new Map(); // ref -> googleusercontent url
+const PHOTO_REF_CACHE = new Map(); // `${width}:${ref}` -> googleusercontent url
 
 app.get("/photo-ref", globalLimiter, async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY;
@@ -299,16 +299,35 @@ app.get("/photo-ref", globalLimiter, async (req, res) => {
   const ref = String(req.query.ref || "").trim().slice(0, 4000);
   if (!ref) return res.status(400).json({ error: "ref is required" });
 
-  const cached = PHOTO_REF_CACHE.get(ref);
+  // How wide the caller actually needs the image.
+  //
+  // This was hard-coded at 640 for everything, while the two callers that use
+  // it are 56pt and 44pt thumbnails — about 168px on a 3x screen. Every card
+  // was pulling roughly 110KB to fill a box needing a fraction of that, and
+  // the Near list mounts every card at once, so a single screen cost several
+  // megabytes before anything appeared. Callers now ask for what they need.
+  //
+  // 640 stays the default so any caller that does not pass w is unaffected.
+  const requested = Number.parseInt(String(req.query.w || ""), 10);
+  const width = Number.isFinite(requested)
+    ? Math.min(Math.max(requested, 64), 1600)
+    : 640;
+
+  // The cache key has to carry the width. It used to be the ref alone, which
+  // was correct while there was one width and silently wrong the moment there
+  // wasn't: a thumbnail request would have been served whatever width landed
+  // in the cache first.
+  const cacheKey = `${width}:${ref}`;
+  const cached = PHOTO_REF_CACHE.get(cacheKey);
   if (cached) return res.redirect(302, cached);
   try {
     const photoRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=640&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${width}&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
       { redirect: "manual" }
     );
     const loc = photoRes.headers.get("location");
     if (!loc) return res.status(404).json({ error: "No photo" });
-    PHOTO_REF_CACHE.set(ref, loc);
+    PHOTO_REF_CACHE.set(cacheKey, loc);
     return res.redirect(302, loc);
   } catch (err) {
     return res.status(500).json({ error: "Photo lookup failed" });
