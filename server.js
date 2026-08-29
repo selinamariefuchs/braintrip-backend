@@ -398,10 +398,22 @@ const AROUND_CATEGORIES = {
     { keyword: "arcade", idea: "Arcade", commodity: true },
     { keyword: "helicopter tour", idea: "Helicopter tour", commodity: true },
     { keyword: "horse carriage ride", idea: "Carriage ride", commodity: true },
-    { type: "amusement_park", idea: "Amusement park" },
-    { type: "aquarium", idea: "Aquarium" },
-    { type: "zoo", idea: "Zoo" },
-    { type: "stadium", idea: "Stadium" },
+    // These four are commodity in the sense that matters here: in "Things to
+    // Do" every row should be something to go and do, with the venues behind
+    // a tap. Without the flag they came through as bare business names in a
+    // list of ideas — Google files The Great Escape Room and Color Factory
+    // under amusement_park, so the activities list read "Boat tour, Helicopter
+    // tour, The Great Escape Room Chicago, Carriage ride", which is the exact
+    // stray-business problem the grouping exists to prevent.
+    //
+    // Attractions is where a singular destination stays itself: the Art
+    // Institute must not hide inside "Museums (3)". That distinction is by
+    // category, not by venue type, which is why the same idea can be grouped
+    // here and standalone there.
+    { type: "amusement_park", idea: "Amusement park", commodity: true },
+    { type: "aquarium", idea: "Aquarium", commodity: true },
+    { type: "zoo", idea: "Zoo", commodity: true },
+    { type: "stadium", idea: "Stadium", commodity: true },
   ],
   // Food groups by what you feel like eating, which is the actual decision.
   // "Restaurant" as one row containing forty places would be no better than
@@ -442,8 +454,24 @@ const CITY_IDEAS = {
   chicago: [
     { keyword: "deep dish pizza", idea: "Deep dish", commodity: true, category: "food" },
     { keyword: "italian beef sandwich", idea: "Italian beef", commodity: true, category: "food" },
+    // Chicago-style hot dogs and caramel-and-cheese popcorn are as particular
+    // to this city as deep dish, and a "burgers" or "bakery" search finds
+    // neither of them.
+    { keyword: "chicago style hot dog", idea: "Chicago dog", commodity: true, category: "food" },
+    { keyword: "caramel cheese popcorn", idea: "Chicago mix", commodity: true, category: "food" },
     { keyword: "blues club", idea: "Blues club", commodity: true, category: "activities" },
     { keyword: "architecture river cruise", idea: "Architecture cruise", commodity: true, category: "activities" },
+    // Improv was invented here, and the jazz and Prohibition rooms are the
+    // other two things people come to Chicago for at night. The generic list
+    // has "comedy club" and "live music venue", which find neither Second
+    // City nor the Green Mill for what they actually are.
+    { keyword: "improv comedy theater", idea: "Improv comedy", commodity: true, category: "activities" },
+    { keyword: "jazz club", idea: "Jazz club", commodity: true, category: "activities" },
+    { keyword: "speakeasy bar", idea: "Speakeasy", commodity: true, category: "activities" },
+    // The lakefront is the thing residents would name first and no generic
+    // "park" search surfaces as what it is.
+    { keyword: "lakefront beach", idea: "Lake beach", category: "attractions" },
+    { keyword: "riverwalk", idea: "Riverwalk", category: "attractions" },
   ],
   tokyo: [
     { keyword: "ramen", idea: "Ramen", commodity: true, category: "food" },
