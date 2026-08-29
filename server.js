@@ -745,6 +745,12 @@ app.get("/around-me", globalLimiter, async (req, res) => {
     const payload = {
       category, radius, page, hasMore, count: places.length, places,
       cityIdeas: cityIdeasFor(city, category).map((i) => i.idea),
+      // GetYourGuide partner id, if the affiliate account is set up. Sent
+      // with every response so activating it is a Render env var
+      // (GYG_PARTNER_ID) rather than an app release — installed copies pick
+      // it up on their next fetch. Null means the app still shows the
+      // booking link, just without the commission tag.
+      bookingPartnerId: process.env.GYG_PARTNER_ID || null,
     };
     AROUND_CACHE.set(cacheKey, { at: Date.now(), payload });
     return res.json(payload);
