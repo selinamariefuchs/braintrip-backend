@@ -1375,9 +1375,23 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       // whoever has to fix it. Anything unmatched stays "upstream" and is
       // only in the logs.
       const KNOWN = [
+        // A self-imposed spend cap on the Anthropic org reads as
+        // "You have reached your specified API usage limits. You will regain
+        // access on <date>." It matched nothing in this list, so it surfaced
+        // as a bare "upstream" and took a day and several deploys to identify
+        // while trivia and Scan were both down. It gets its own reason now:
+        // it is not a credit balance, and adding credits does not clear it.
+        ["usage limit", "usage_limit"],
+        ["spend limit", "usage_limit"],
         ["credit balance", "credit"],
         ["insufficient", "credit"],
         ["quota", "credit"],
+        // Anthropic writes the header name with hyphens — "invalid x-api-key"
+        // — which the spaced phrase never matched. A bad key normally arrives
+        // as a 401 and is classified by status before reaching this table, so
+        // this only matters when the status is something else, but that is
+        // exactly the case where the table is all there is.
+        ["x-api-key", "auth"],
         ["api key", "auth"],
         ["authentication", "auth"],
         ["permission", "auth"],
@@ -1424,20 +1438,18 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
                 : typeof messages[0].content)
           : null,
       };
-      // invalid_request_error is Anthropic telling us our own request is
-      // wrong. By definition it describes fields we sent, not account data or
-      // credentials, so it is safe to return — and the host's log pane has
-      // not shown a line for any of these failures, which left no other way
-      // to read it. Only this one error type, capped, and nothing else.
-      const upstreamDetail =
-        upstreamType === "invalid_request_error"
-          ? String(data?.error?.message || "").slice(0, 200)
-          : undefined;
+      // The raw upstream message used to be echoed here for invalid_request_error,
+      // on the reasoning that such an error only ever describes fields we sent.
+      // That reasoning was wrong, and the message that proved it is the one it
+      // was added to find: "You have reached your specified API usage limits"
+      // arrives as invalid_request_error and is account billing state, not
+      // request shape. It is gone again now that it has served its purpose —
+      // the full message is still logged above against the traceId, which is
+      // where it belongs, and `reason` now classifies this case by name.
       return res.status(response.status >= 500 ? 502 : response.status).json({
         traceId,
         reason,
         upstreamType,
-        ...(upstreamDetail ? { upstreamDetail } : {}),
         sentShape,
         replyShape,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
