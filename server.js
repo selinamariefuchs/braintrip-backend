@@ -470,8 +470,14 @@ const CITY_IDEAS = {
     { keyword: "speakeasy bar", idea: "Speakeasy", commodity: true, category: "activities" },
     // The lakefront is the thing residents would name first and no generic
     // "park" search surfaces as what it is.
-    { keyword: "lakefront beach", idea: "Lake beach", category: "attractions" },
-    { keyword: "riverwalk", idea: "Riverwalk", category: "attractions" },
+    // Grouped, unlike the museums around them. A keyword search for these
+    // matches anything with the word in its name, so "riverwalk" returns the
+    // Chicago Riverwalk along with the Brewhouse, O'Briens Café, Chiya Chai
+    // and City Winery that sit on it — five bars that would each have become
+    // their own attraction row. As one idea the walk is the row and the
+    // places along it are the options, which is what they are.
+    { keyword: "lakefront beach", idea: "Lake beach", commodity: true, category: "attractions" },
+    { keyword: "riverwalk", idea: "Riverwalk", commodity: true, category: "attractions" },
     // The deeper cuts. Narrower than the ones above, and kept only because
     // each was checked against live results rather than assumed: a keyword
     // that finds nothing costs a Google call per page and shows the reader
