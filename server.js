@@ -166,10 +166,22 @@ const ANTHROPIC_MAX_TOKENS_CAP = 4096;       // Hard cap regardless of what clie
 const ANTHROPIC_MAX_MESSAGES = 50;            // Prevent unbounded context bloating cost
 const ANTHROPIC_REQUEST_TIMEOUT_MS = 60_000;  // Kill requests after 60s
 const ANTHROPIC_ALLOWED_MODELS = new Set([
+  "claude-sonnet-4-6",
   "claude-sonnet-4-20250514",
   "claude-haiku-4-5-20251001",
   "claude-haiku-4-5",
 ]);
+
+// Models that were allowed once and have since been retired upstream.
+//
+// Scan sends "claude-sonnet-4-20250514", which passed the allowlist and then
+// came back 404 not_found_error from Anthropic — a break that looked like a
+// scan bug and was really a dead model id. The version on the App Store has
+// that id compiled into it, so removing it here would leave every installed
+// copy broken until they update. Remapping fixes them where they stand.
+const ANTHROPIC_MODEL_ALIASES = {
+  "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+};
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -1302,6 +1314,8 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Model not allowed" });
     }
 
+    const upstreamModel = ANTHROPIC_MODEL_ALIASES[model] ?? model;
+
     // Guardrail 2: Cap max_tokens server-side regardless of client value
     const safeMaxTokens = Math.min(Math.max(1, Number(max_tokens) || 0), ANTHROPIC_MAX_TOKENS_CAP);
 
@@ -1317,7 +1331,7 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({ model, max_tokens: safeMaxTokens, messages }),
+      body: JSON.stringify({ model: upstreamModel, max_tokens: safeMaxTokens, messages }),
       signal: controller.signal,
     });
 
@@ -1397,7 +1411,8 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
         contentType: response.headers.get("content-type"),
       };
       const sentShape = {
-        model,
+        // What actually went upstream, which is what the error is about.
+        model: upstreamModel,
         maxTokens: safeMaxTokens,
         maxTokensType: typeof safeMaxTokens,
         messageCount: Array.isArray(messages) ? messages.length : null,
