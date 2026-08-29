@@ -288,6 +288,44 @@ app.get("/place-search", globalLimiter, async (req, res) => {
 // Serves a photo by Places photo_reference (from /place-search results).
 const PHOTO_REF_CACHE = new Map(); // `${width}:${ref}` -> googleusercontent url
 
+// ─── Booking redirect ────────────────────────────────────────
+//
+// The app's "Find tours & tickets" links come here rather than straight to a
+// marketplace, for two reasons that both matter more than the extra hop.
+//
+// The provider is a server decision. GetYourGuide's partner program turned
+// down the application for having too few users, so the default is Viator,
+// whose program takes small publishers. When any program approves, its id is
+// an env var and every installed copy starts earning on its next tap — and
+// if a better program appears later, switching is a deploy, not a release.
+//
+// Every tap is counted in the logs. "Not enough users" is beaten with
+// numbers: grep the logs for [book] and the running total IS the outbound
+// click volume to quote in the next affiliate application.
+let bookClicks = 0;
+app.get("/book", globalLimiter, (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 120);
+  if (!q) return res.status(400).json({ error: "q is required" });
+
+  const provider = process.env.BOOKING_PROVIDER || "viator";
+  let url;
+  if (provider === "getyourguide") {
+    url = `https://www.getyourguide.com/s/?q=${encodeURIComponent(q)}`;
+    if (process.env.GYG_PARTNER_ID) {
+      url += `&partner_id=${encodeURIComponent(process.env.GYG_PARTNER_ID)}`;
+    }
+  } else {
+    url = `https://www.viator.com/searchResults/all?text=${encodeURIComponent(q)}`;
+    if (process.env.VIATOR_PID) {
+      url += `&pid=${encodeURIComponent(process.env.VIATOR_PID)}&mcid=42383&medium=link`;
+    }
+  }
+
+  bookClicks += 1;
+  console.log(`[book] #${bookClicks} ${provider} "${q}"`);
+  return res.redirect(302, url);
+});
+
 app.get("/photo-ref", globalLimiter, async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) return res.status(503).json({ error: "Places not configured" });
@@ -745,12 +783,6 @@ app.get("/around-me", globalLimiter, async (req, res) => {
     const payload = {
       category, radius, page, hasMore, count: places.length, places,
       cityIdeas: cityIdeasFor(city, category).map((i) => i.idea),
-      // GetYourGuide partner id, if the affiliate account is set up. Sent
-      // with every response so activating it is a Render env var
-      // (GYG_PARTNER_ID) rather than an app release — installed copies pick
-      // it up on their next fetch. Null means the app still shows the
-      // booking link, just without the commission tag.
-      bookingPartnerId: process.env.GYG_PARTNER_ID || null,
     };
     AROUND_CACHE.set(cacheKey, { at: Date.now(), payload });
     return res.json(payload);
