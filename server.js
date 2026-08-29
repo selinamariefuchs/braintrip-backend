@@ -472,6 +472,14 @@ const CITY_IDEAS = {
     // "park" search surfaces as what it is.
     { keyword: "lakefront beach", idea: "Lake beach", category: "attractions" },
     { keyword: "riverwalk", idea: "Riverwalk", category: "attractions" },
+    // The deeper cuts. Narrower than the ones above, and kept only because
+    // each was checked against live results rather than assumed: a keyword
+    // that finds nothing costs a Google call per page and shows the reader
+    // no row at all.
+    { keyword: "gospel brunch", idea: "Gospel brunch", commodity: true, category: "food" },
+    { keyword: "jibarito", idea: "Jibarito", commodity: true, category: "food" },
+    { keyword: "malort", idea: "Malört", commodity: true, category: "food" },
+    { keyword: "ice skating rink", idea: "Ice skating", commodity: true, category: "activities" },
   ],
   tokyo: [
     { keyword: "ramen", idea: "Ramen", commodity: true, category: "food" },
