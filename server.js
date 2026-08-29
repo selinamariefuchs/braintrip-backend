@@ -1409,10 +1409,20 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
                 : typeof messages[0].content)
           : null,
       };
+      // invalid_request_error is Anthropic telling us our own request is
+      // wrong. By definition it describes fields we sent, not account data or
+      // credentials, so it is safe to return — and the host's log pane has
+      // not shown a line for any of these failures, which left no other way
+      // to read it. Only this one error type, capped, and nothing else.
+      const upstreamDetail =
+        upstreamType === "invalid_request_error"
+          ? String(data?.error?.message || "").slice(0, 200)
+          : undefined;
       return res.status(response.status >= 500 ? 502 : response.status).json({
         traceId,
         reason,
         upstreamType,
+        ...(upstreamDetail ? { upstreamDetail } : {}),
         sentShape,
         replyShape,
         error: response.status === 429 ? "Rate limited upstream, try again shortly" : "Upstream service error",
