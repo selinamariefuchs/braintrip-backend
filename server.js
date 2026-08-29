@@ -315,10 +315,14 @@ app.get("/book", globalLimiter, (req, res) => {
       url += `&partner_id=${encodeURIComponent(process.env.GYG_PARTNER_ID)}`;
     }
   } else {
-    url = `https://www.viator.com/searchResults/all?text=${encodeURIComponent(q)}`;
-    if (process.env.VIATOR_PID) {
-      url += `&pid=${encodeURIComponent(process.env.VIATOR_PID)}&mcid=42383&medium=link`;
-    }
+    // P00310317 is the account's real Viator partner id — it already ships
+    // inside the app in lib/viator.ts, which tags the itinerary screen's
+    // "Book Experiences" links with it. The env var still wins so the id
+    // can be rotated without a deploy, but the default means /book earns
+    // from day one instead of waiting on configuration nobody remembers.
+    const pid = process.env.VIATOR_PID || "P00310317";
+    url = `https://www.viator.com/searchResults/all?text=${encodeURIComponent(q)}` +
+      `&pid=${encodeURIComponent(pid)}&mcid=42383&medium=link`;
   }
 
   bookClicks += 1;
