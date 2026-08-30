@@ -330,6 +330,139 @@ app.get("/book", globalLimiter, (req, res) => {
   return res.redirect(302, url);
 });
 
+// ─── Viator tours for a city ─────────────────────────────────
+//
+// This lookup used to run in the app with the API key compiled into the
+// bundle, where anyone who unpacks the IPA can read it. The key lives here
+// now (VIATOR_API_KEY env var, so the repo never carries it), and the app
+// gets back exactly the card data it used to build for itself. Shipped
+// versions with the old key fall back to their built-in search links once
+// that key is rotated — still affiliate-tagged, just less rich.
+//
+// Without the env var this returns one tagged search card per city, which
+// is the same fallback the client used when the API errored. So the screen
+// never goes blank; it just gets richer when the key is configured.
+const VIATOR_DEFAULT_PID = "P00310317";
+const TOURS_CACHE = new Map(); // cityKey -> { at, payload }
+const TOURS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let viatorDestinations = null; // taxonomy is ~static; fetched once per boot
+
+function viatorAffiliateUrl(url) {
+  const pid = process.env.VIATOR_PID || VIATOR_DEFAULT_PID;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}pid=${encodeURIComponent(pid)}&mcid=42383&medium=link`;
+}
+
+function viatorDuration(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function viatorFallback(city) {
+  return [{
+    productCode: "search",
+    title: `Top experiences in ${city}`,
+    description: `Explore tours, activities, and experiences in ${city} on Viator.`,
+    price: null,
+    rating: null,
+    reviewCount: 0,
+    imageUrl: null,
+    duration: null,
+    webURL: viatorAffiliateUrl(
+      `https://www.viator.com/searchResults/all?text=${encodeURIComponent(city)}`
+    ),
+  }];
+}
+
+app.get("/tours", globalLimiter, async (req, res) => {
+  const city = String(req.query.city || "").trim().slice(0, 80);
+  if (!city) return res.status(400).json({ error: "city is required" });
+  const limit = Math.max(1, Math.min(5, Number(req.query.limit) || 3));
+
+  const cacheKey = `${city.toLowerCase()}|${limit}`;
+  const hit = TOURS_CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.at < TOURS_CACHE_TTL_MS) {
+    return res.json({ ...hit.payload, cached: true });
+  }
+
+  const key = process.env.VIATOR_API_KEY;
+  if (!key) return res.json({ tours: viatorFallback(city) });
+
+  try {
+    // The client code this replaces called /partner/v1/taxonomy/destinations,
+    // which now 404s — Viator retired v1, so the in-app section had been
+    // quietly falling back to the search card for as long as that's been
+    // true. This targets the current API and reads both field spellings the
+    // two generations used, because the docs are behind a JS app and the
+    // account's key is dead until rotated, so the exact live shape couldn't
+    // be confirmed while writing this. Any surprise lands in catch and the
+    // fallback card ships instead.
+    if (!viatorDestinations) {
+      const destRes = await fetch(
+        "https://api.viator.com/partner/destinations",
+        { headers: { "exp-api-key": key, Accept: "application/json;version=2.0" } }
+      );
+      if (!destRes.ok) return res.json({ tours: viatorFallback(city) });
+      const destData = await destRes.json();
+      viatorDestinations = destData?.destinations || destData?.data || [];
+    }
+
+    const cityLower = city.toLowerCase();
+    const nameOf = (d) => String(d.name || d.destinationName || "").toLowerCase();
+    const match = viatorDestinations.find(
+      (d) => nameOf(d) === cityLower || nameOf(d).startsWith(cityLower)
+    );
+    if (!match) return res.json({ tours: viatorFallback(city) });
+
+    const productsRes = await fetch("https://api.viator.com/partner/products/search", {
+      method: "POST",
+      headers: {
+        "exp-api-key": key,
+        Accept: "application/json;version=2.0",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filtering: { destination: String(match.destinationId ?? match.ref) },
+        sorting: { sort: "TRAVELER_RATING", order: "DESCENDING" },
+        pagination: { start: 1, count: limit },
+        currency: "USD",
+      }),
+    });
+    if (!productsRes.ok) return res.json({ tours: viatorFallback(city) });
+    const productsData = await productsRes.json();
+    const products = Array.isArray(productsData?.products)
+      ? productsData.products
+      : productsData?.products?.results || productsData?.data || [];
+
+    const tours = products.map((p) => ({
+      productCode: p.productCode || "",
+      title: p.title || "",
+      description: p.description || "",
+      price: p.pricing?.summary?.fromPrice
+        ? { amount: p.pricing.summary.fromPrice, currencyCode: p.pricing.currency || "USD" }
+        : null,
+      rating: p.reviews?.combinedAverageRating ?? null,
+      reviewCount: p.reviews?.totalReviews ?? 0,
+      imageUrl: p.images?.[0]?.variants?.[0]?.url || null,
+      duration: p.duration?.fixedDurationInMinutes
+        ? viatorDuration(p.duration.fixedDurationInMinutes)
+        : null,
+      webURL: viatorAffiliateUrl(
+        p.productUrl || `https://www.viator.com/tours/${encodeURIComponent(city)}/${p.productCode}`
+      ),
+    }));
+
+    const payload = { tours: tours.length ? tours : viatorFallback(city) };
+    TOURS_CACHE.set(cacheKey, { at: Date.now(), payload });
+    return res.json(payload);
+  } catch (err) {
+    console.warn("[tours] failed:", err?.message || err);
+    return res.json({ tours: viatorFallback(city) });
+  }
+});
+
 app.get("/photo-ref", globalLimiter, async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) return res.status(503).json({ error: "Places not configured" });
