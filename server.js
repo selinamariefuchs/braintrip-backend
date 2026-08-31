@@ -348,6 +348,10 @@ const TOURS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let viatorDestinations = null; // taxonomy is ~static; fetched once per boot
 
 function viatorAffiliateUrl(url) {
+  // The current API already embeds pid/mcid attribution in productUrl, so
+  // tagging is only for URLs built by hand (search links, fallbacks).
+  // Appending unconditionally produced a second pid= on every product link.
+  if (url.includes("pid=")) return url;
   const pid = process.env.VIATOR_PID || VIATOR_DEFAULT_PID;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}pid=${encodeURIComponent(pid)}&mcid=42383&medium=link`;
