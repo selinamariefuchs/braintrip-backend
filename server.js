@@ -387,8 +387,14 @@ app.get("/tours", globalLimiter, async (req, res) => {
     return res.json({ ...hit.payload, cached: true });
   }
 
+  // ?debug=1 names which step fell back — env missing, an upstream HTTP
+  // status, or a parse surprise. Statuses and step names only, never key
+  // material: the whole point of this endpoint is that the key is invisible.
+  const debug = req.query.debug === "1";
+  const fall = (why) => res.json({ tours: viatorFallback(city), ...(debug ? { why } : {}) });
+
   const key = process.env.VIATOR_API_KEY;
-  if (!key) return res.json({ tours: viatorFallback(city) });
+  if (!key) return fall("no-key-in-env");
 
   try {
     // The client code this replaces called /partner/v1/taxonomy/destinations,
@@ -404,9 +410,10 @@ app.get("/tours", globalLimiter, async (req, res) => {
         "https://api.viator.com/partner/destinations",
         { headers: { "exp-api-key": key, Accept: "application/json;version=2.0" } }
       );
-      if (!destRes.ok) return res.json({ tours: viatorFallback(city) });
+      if (!destRes.ok) return fall(`destinations-http-${destRes.status}`);
       const destData = await destRes.json();
       viatorDestinations = destData?.destinations || destData?.data || [];
+      if (!viatorDestinations.length) return fall("destinations-empty-parse");
     }
 
     const cityLower = city.toLowerCase();
@@ -414,7 +421,7 @@ app.get("/tours", globalLimiter, async (req, res) => {
     const match = viatorDestinations.find(
       (d) => nameOf(d) === cityLower || nameOf(d).startsWith(cityLower)
     );
-    if (!match) return res.json({ tours: viatorFallback(city) });
+    if (!match) return fall("no-destination-match");
 
     const productsRes = await fetch("https://api.viator.com/partner/products/search", {
       method: "POST",
@@ -430,7 +437,7 @@ app.get("/tours", globalLimiter, async (req, res) => {
         currency: "USD",
       }),
     });
-    if (!productsRes.ok) return res.json({ tours: viatorFallback(city) });
+    if (!productsRes.ok) return fall(`products-http-${productsRes.status}`);
     const productsData = await productsRes.json();
     const products = Array.isArray(productsData?.products)
       ? productsData.products
@@ -459,7 +466,7 @@ app.get("/tours", globalLimiter, async (req, res) => {
     return res.json(payload);
   } catch (err) {
     console.warn("[tours] failed:", err?.message || err);
-    return res.json({ tours: viatorFallback(city) });
+    return fall(`exception-${String(err?.message || err).slice(0, 80)}`);
   }
 });
 
