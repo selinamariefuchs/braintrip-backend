@@ -414,9 +414,12 @@ app.get("/tours", globalLimiter, async (req, res) => {
     // be confirmed while writing this. Any surprise lands in catch and the
     // fallback card ships instead.
     if (!viatorDestinations) {
+      // Accept-Language is REQUIRED — omitting it is a 400, which the
+      // sandbox demonstrated the hard way. Found there before any
+      // production key existed to find it with.
       const destRes = await fetch(
         "https://api.viator.com/partner/destinations",
-        { headers: { "exp-api-key": key, Accept: "application/json;version=2.0" } }
+        { headers: { "exp-api-key": key, Accept: "application/json;version=2.0", "Accept-Language": "en-US" } }
       );
       if (!destRes.ok) return fall(`destinations-http-${destRes.status}`);
       const destData = await destRes.json();
@@ -436,6 +439,7 @@ app.get("/tours", globalLimiter, async (req, res) => {
       headers: {
         "exp-api-key": key,
         Accept: "application/json;version=2.0",
+        "Accept-Language": "en-US",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
