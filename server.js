@@ -393,8 +393,16 @@ app.get("/tours", globalLimiter, async (req, res) => {
   const debug = req.query.debug === "1";
   const fall = (why) => res.json({ tours: viatorFallback(city), ...(debug ? { why } : {}) });
 
-  const key = process.env.VIATOR_API_KEY;
+  // Trimmed because env values pasted into dashboards routinely pick up a
+  // trailing newline, and Viator answers that with the same 401 as a wrong
+  // key. Debug exposes length and shape only — enough to spot a bad paste,
+  // nothing that identifies the key.
+  const key = (process.env.VIATOR_API_KEY || "").trim();
   if (!key) return fall("no-key-in-env");
+  if (debug) {
+    res.set("x-tours-keylen", String(key.length));
+    res.set("x-tours-keyshape", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key) ? "uuid" : "other");
+  }
 
   try {
     // The client code this replaces called /partner/v1/taxonomy/destinations,
