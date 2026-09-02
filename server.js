@@ -1366,12 +1366,15 @@ app.post("/itinerary", aiLimiter, requireAuth, async (req, res) => {
 
     const cleanCity = city.trim();
 
+    // Each category batch pins the type field to what the client's filter
+    // expects — without this the model typed half a "things to do" batch as
+    // Landmark, and those spots vanished into the Attractions tab.
     const categoryPrompt = category === "attractions"
-      ? "Focus on iconic landmarks and attractions only."
+      ? "Focus on iconic landmarks and attractions only. Set type to Landmark or Culture for every spot."
       : category === "food"
-      ? "Focus on restaurants, cafes, and food experiences only."
+      ? "Focus on restaurants, cafes, and food experiences only. Set type to Food & Drink for every spot."
       : category === "things-to-do"
-      ? "Focus on activities, experiences, and things to do only."
+      ? "Focus on activities, experiences, and things to do only — tours, cruises, shows, sports, classes, active outings. Set type to Experience for every spot."
       : "Mix iconic landmarks, local food spots, and lesser known finds equally.";
 
     const prompt = `
