@@ -433,10 +433,25 @@ app.get("/tours", globalLimiter, async (req, res) => {
 
     const cityLower = city.toLowerCase();
     const nameOf = (d) => String(d.name || d.destinationName || "").toLowerCase();
-    const match = viatorDestinations.find(
+    // Several destinations can share a name — Viator's taxonomy lists San
+    // Pancho, Mexico as "San Francisco" (d51252), and taking the first
+    // array hit put $300 Mexican beach tours on the San Francisco, CA
+    // screen. Rank instead: exact name beats prefix, CITY type beats
+    // regions/POIs, and the lowest numeric id wins ties — Viator seeded
+    // the major markets first (San Francisco CA is d651).
+    const candidates = viatorDestinations.filter(
       (d) => nameOf(d) === cityLower || nameOf(d).startsWith(cityLower)
     );
-    if (!match) return fall("no-destination-match");
+    if (!candidates.length) return fall("no-destination-match");
+    const idOf = (d) => Number(d.destinationId ?? d.ref) || Number.MAX_SAFE_INTEGER;
+    const kindOf = (d) => String(d.type || d.destinationType || "").toUpperCase();
+    candidates.sort(
+      (a, b) =>
+        (nameOf(b) === cityLower) - (nameOf(a) === cityLower) ||
+        (kindOf(b) === "CITY") - (kindOf(a) === "CITY") ||
+        idOf(a) - idOf(b)
+    );
+    const match = candidates[0];
 
     const productsRes = await fetch("https://api.viator.com/partner/products/search", {
       method: "POST",
