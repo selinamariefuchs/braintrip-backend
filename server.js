@@ -1570,6 +1570,101 @@ Return exactly 5 spots and 3 hidden challenges.
 
 // Generic Anthropic Messages API proxy
 // Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
+// ─── Shared trivia cache ─────────────────────────────────────
+//
+// The app builds its trivia prompt on the device and sends it here. For
+// someone with no history in a city that prompt is byte-for-byte the same
+// as everyone else's, so the first person pays the model's 5 to 30 seconds
+// and everyone after them gets the answer back at once. That is what makes
+// the daily question, which is the first screen a new user sees, open
+// without a spinner.
+//
+// Only fresh trivia prompts are cached. A prompt that lists previously
+// asked topics is personal to one player and is always generated new, so
+// retakes and later rounds still vary exactly as before. Nothing about the
+// questions themselves changes: the prompt is untouched and still comes
+// from the app.
+const TRIVIA_CACHE = new Map(); // key -> Anthropic response body
+const TRIVIA_CACHE_MAX = 500;
+const TRIVIA_CACHE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const TRIVIA_PROMPT_PREFIX = "You are an expert travel trivia author";
+
+function triviaCacheKey(model, maxTokens, messages) {
+  if (!Array.isArray(messages) || messages.length !== 1) return null;
+  const content = messages[0]?.content;
+  if (typeof content !== "string" || !content.startsWith(TRIVIA_PROMPT_PREFIX)) return null;
+  if (content.includes("AVOID these previously asked topics")) return null;
+  // The week is part of the key, so entries expire on their own.
+  const week = Math.floor(Date.now() / TRIVIA_CACHE_WEEK_MS);
+  const hash = crypto.createHash("sha256").update(`${model}|${maxTokens}|${content}`).digest("hex");
+  return `trivia-cache/v1/${week}/${hash}.json`;
+}
+
+/** A reply is only worth keeping if it really is a full set of questions. */
+function looksLikeQuestionSet(data) {
+  const text = data?.content?.[0]?.text;
+  if (typeof text !== "string") return false;
+  const first = text.indexOf("[");
+  const last = text.lastIndexOf("]");
+  if (first < 0 || last <= first) return false;
+  try {
+    const parsed = JSON.parse(text.slice(first, last + 1));
+    return Array.isArray(parsed) && parsed.length >= 5;
+  } catch {
+    return false;
+  }
+}
+
+async function readTriviaCache(key) {
+  const hit = TRIVIA_CACHE.get(key);
+  if (hit) return hit;
+  // Memory is lost whenever the server restarts or sleeps, so fall back to
+  // storage. Bounded to 1.5s: a slow lookup must never cost more than it saves.
+  if (!supabase) return null;
+  try {
+    const { data } = supabase.storage.from(POSTCARD_BUCKET).getPublicUrl(key);
+    if (!data?.publicUrl) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    try {
+      const r = await fetch(data.publicUrl, { signal: controller.signal });
+      if (!r.ok) return null;
+      const body = await r.json();
+      if (!looksLikeQuestionSet(body)) return null;
+      rememberTrivia(key, body);
+      return body;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function rememberTrivia(key, body) {
+  if (TRIVIA_CACHE.size >= TRIVIA_CACHE_MAX) {
+    // Maps iterate in insertion order, so this drops the oldest entry.
+    TRIVIA_CACHE.delete(TRIVIA_CACHE.keys().next().value);
+  }
+  TRIVIA_CACHE.set(key, body);
+}
+
+async function writeTriviaCache(key, body) {
+  rememberTrivia(key, body);
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.storage
+      .from(POSTCARD_BUCKET)
+      .upload(key, Buffer.from(JSON.stringify(body), "utf8"), {
+        contentType: "application/json",
+        upsert: true,
+      });
+    if (error) console.warn("[trivia-cache] upload error:", error.message);
+  } catch (err) {
+    console.warn("[trivia-cache] upload threw:", err?.message || err);
+  }
+}
+
 app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_REQUEST_TIMEOUT_MS);
@@ -1599,6 +1694,15 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
     // Guardrail 3: Cap message count to prevent context bloat
     if (!Array.isArray(messages) || messages.length === 0 || messages.length > ANTHROPIC_MAX_MESSAGES) {
       return res.status(400).json({ error: "Invalid messages array" });
+    }
+
+    const cacheKey = triviaCacheKey(upstreamModel, safeMaxTokens, messages);
+    if (cacheKey) {
+      const cached = await readTriviaCache(cacheKey);
+      if (cached) {
+        res.set("x-bt-cache", "hit");
+        return res.json(cached);
+      }
     }
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1733,6 +1837,7 @@ app.post("/anthropic/messages", aiLimiter, requireAuth, async (req, res) => {
       });
     }
 
+    if (cacheKey && looksLikeQuestionSet(data)) void writeTriviaCache(cacheKey, data);
     return res.json(data);
   } catch (error) {
     if (error?.name === "AbortError") {
