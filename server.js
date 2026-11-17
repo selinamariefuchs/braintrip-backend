@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import crypto from "crypto";
+import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
@@ -1570,6 +1571,31 @@ Return exactly 5 spots and 3 hidden challenges.
 
 // Generic Anthropic Messages API proxy
 // Used by trivia-quick, use-scan-insight-api, use-city-validation, etc.
+// ─── City trivia prompt wording ──────────────────────────────
+//
+// The app has this prompt built in and uses its own copy by default. When
+// the app's remote_trivia_prompt_enabled flag is on, it asks here instead,
+// which lets the wording in prompts/trivia-city.txt be tuned with a deploy
+// rather than an App Store release. The file ships identical to the app's
+// built-in prompt, so turning the flag on changes nothing until the file
+// does. The {{placeholders}} are filled in by the app, which still decides
+// the level and difficulty mix; the app rejects a template missing any.
+let TRIVIA_PROMPT_TEMPLATE = null;
+try {
+  TRIVIA_PROMPT_TEMPLATE = fs.readFileSync(new URL("./prompts/trivia-city.txt", import.meta.url), "utf8");
+} catch (err) {
+  console.warn("[trivia-prompt] template not loaded:", err?.message || err);
+}
+const TRIVIA_PROMPT_VERSION = TRIVIA_PROMPT_TEMPLATE
+  ? crypto.createHash("sha1").update(TRIVIA_PROMPT_TEMPLATE).digest("hex").slice(0, 10)
+  : null;
+
+app.get("/trivia-prompt", globalLimiter, (req, res) => {
+  if (!TRIVIA_PROMPT_TEMPLATE) return res.status(404).json({ error: "No template" });
+  res.set("Cache-Control", "public, max-age=300");
+  return res.json({ version: TRIVIA_PROMPT_VERSION, template: TRIVIA_PROMPT_TEMPLATE });
+});
+
 // ─── Shared trivia cache ─────────────────────────────────────
 //
 // The app builds its trivia prompt on the device and sends it here. For

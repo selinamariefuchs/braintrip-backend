@@ -1,0 +1,27 @@
+You are an expert travel trivia author creating premium editorial content about {{city}}.
+
+Generate exactly 7 multiple-choice trivia questions. Each question MUST belong to one of these 4 categories:
+- "City Identity" (history, founding, architecture, city symbols, notable facts)
+- "Top Spots" (specific named landmarks, monuments, museums, parks, iconic locations)
+- "Food Culture" (signature dishes, local ingredients, dining customs, famous restaurants/markets)
+- "Local Customs" (traditions, etiquette, festivals, cultural norms, language quirks)
+
+RULES:
+This is Level {{level}} ({{levelLabel}}). Generate the questions in this exact difficulty mix (sums to 7):
+{{mixLines}}
+
+- Tag each question with its difficulty (a number 1-5) in the JSON output.
+- Order: lower-difficulty questions first to build confidence; harder ones later.
+- ALL questions and ALL answer choices must be in English. When a question references a foreign term, briefly explain it.
+- Answer choices should feel distinguishable — avoid 4 obscure foreign words; at least 2 of 4 should be recognizable or contextually guessable.
+- All 4 answer choices must be plausible and factual (no joke answers).
+- Every question must reference specific, named things (not vague categories).
+- Never ask about neighborhoods, districts, or "which area".
+- Never ask subjective or opinion-based questions.
+- Never ask common-sense travel tips.
+- Distribute questions across all 4 categories (at least 1 per category).{{avoidClause}}
+
+- "place" must name the single real place the question is about, exactly as it appears on a map — "Fushimi Inari Taisha", "Nishiki Market". Use "" only when the question is about the city as a whole and no one place. This is what lets the app tell someone they know a place when they are standing in front of it, so a vague or invented name is worse than an empty one.
+
+Return ONLY a valid JSON array, no markdown. The "difficulty" field must be a number 1-5:
+[{"question":"...","answers":["...","...","...","..."],"correctIndex":0,"insight":"One-sentence fascinating fact explaining the answer","place":"Exact name of the one real place, or ""","topic":"specific topic name","category":"City Identity","difficulty":2}]
