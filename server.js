@@ -383,11 +383,14 @@ app.get("/top-places", globalLimiter, async (req, res) => {
     while (entry.results.length < (page + 1) * TOP_PAGE && entry.nextToken && guard < 2) {
       guard += 1;
       let data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
-      // A page token takes a moment to become valid after it is issued.
-      if (data?.status === "INVALID_REQUEST") {
+      // A page token takes a couple of seconds to become valid after it is
+      // issued. Wait and try again; if it is still not ready, keep the token
+      // and let the app ask again, rather than deciding there is no more.
+      for (let tries = 0; data?.status === "INVALID_REQUEST" && tries < 2; tries += 1) {
         await new Promise((r) => setTimeout(r, 2000));
         data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
       }
+      if (data?.status === "INVALID_REQUEST") break;
       if (data?.status !== "OK") { entry.nextToken = null; break; }
       const seen = new Set(entry.results.map((r) => r.name.toLowerCase()));
       entry.results.push(...shapeTopPlaces(data.results).filter((r) => !seen.has(r.name.toLowerCase())));
