@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import crypto from "crypto";
 import fs from "fs";
@@ -45,13 +45,40 @@ app.use(express.json({ limit: '20mb' }));
 
 // ─── Rate limiters ──────────────────────────────────────────
 // Strict limit on AI endpoints (each call costs real money)
-const aiLimiter = rateLimit({
-  windowMs: 60 * 1000,           // 1 minute
-  max: 10,                        // 10 AI calls per IP per minute
+//
+// Two limits, applied together:
+//   - per player: 10 AI calls a minute, keyed on the caller's own token
+//   - per network: 40 a minute for one IP address, as a ceiling
+// It used to be 10 a minute per IP only. Four friends on the same hotel
+// wifi share one address, so a crew loading rounds together could lock
+// each other out. Now each of them gets their own ten. The network ceiling
+// stays so that minting fresh guest tokens is not a way around the limit.
+const AI_LIMIT_MESSAGE = { error: "Too many requests. Please slow down and try again in a minute." };
+
+const aiPlayerLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many requests. Please slow down and try again in a minute." },
+  message: AI_LIMIT_MESSAGE,
+  keyGenerator: (req) => {
+    const match = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+    if (!match) return `ip:${ipKeyGenerator(req.ip)}`;
+    return `t:${crypto.createHash("sha256").update(match[1].trim()).digest("hex").slice(0, 32)}`;
+  },
 });
+
+const aiNetworkLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: AI_LIMIT_MESSAGE,
+});
+
+// Express accepts an array wherever it accepts one middleware, so every
+// route that already says `aiLimiter` gets both.
+const aiLimiter = [aiNetworkLimiter, aiPlayerLimiter];
 
 // Looser global limit catches everything else
 const globalLimiter = rateLimit({
@@ -210,7 +237,13 @@ app.get("/spot-photo", globalLimiter, async (req, res) => {
   const query = String(req.query.q || "").trim().slice(0, 200);
   if (!query) return res.status(400).json({ error: "q is required" });
 
-  const cacheKey = query.toLowerCase();
+  // How wide the caller needs the image. A list thumbnail is about 160px;
+  // sending 640 for it cost four times the bytes for nothing. 640 stays the
+  // default, so callers that pass nothing are unaffected.
+  const requestedWidth = Number.parseInt(String(req.query.w || ""), 10);
+  const width = Number.isFinite(requestedWidth) ? Math.min(Math.max(requestedWidth, 64), 1600) : 640;
+
+  const cacheKey = `${width}|${query.toLowerCase()}`;
   const hit = SPOT_PHOTO_CACHE.get(cacheKey);
   if (hit) {
     if (!hit.url) return res.status(404).json({ error: "No photo found" });
@@ -231,7 +264,7 @@ app.get("/spot-photo", globalLimiter, async (req, res) => {
     // The photo endpoint 302s to a googleusercontent URL that doesn't
     // contain the API key — resolve it and send the client there.
     const photoRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=640&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${width}&photo_reference=${encodeURIComponent(ref)}&key=${key}`,
       { redirect: "manual" }
     );
     const loc = photoRes.headers.get("location");
