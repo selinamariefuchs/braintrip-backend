@@ -327,15 +327,17 @@ app.get("/place-search", globalLimiter, async (req, res) => {
 // for a day, so it costs the same however many people open it.
 const TOP_PLACES_CACHE = new Map(); // `${city}|${cat}` -> { at, results, nextToken }
 const TOP_PLACES_TTL_MS = 24 * 60 * 60 * 1000;
-const TOP_PAGE = 20;
 const NOT_A_SIGHT = new Set(["travel_agency", "lodging", "tour_agency", "real_estate_agency", "car_rental"]);
+// Three searches per category, asked one at a time as someone scrolls. Each
+// is worded differently so it turns up different places; Google's own "next
+// page" tokens proved unreliable here, and this needs none.
 const TOP_QUERIES = {
-  top: (c) => `top sights and things to do in ${c}`,
-  food: (c) => `best restaurants and street food in ${c}`,
-  nature: (c) => `parks, gardens and nature spots in ${c}`,
-  museums: (c) => `museums and galleries in ${c}`,
-  nightlife: (c) => `best bars and nightlife in ${c}`,
-  gems: (c) => `hidden gems and unusual things to do in ${c}`,
+  top: [(c) => `top sights and things to do in ${c}`, (c) => `famous landmarks and attractions in ${c}`, (c) => `best places to visit in ${c} for first time visitors`],
+  food: [(c) => `best restaurants and street food in ${c}`, (c) => `famous local food spots and markets in ${c}`, (c) => `best cafes and bakeries in ${c}`],
+  nature: [(c) => `parks, gardens and nature spots in ${c}`, (c) => `scenic viewpoints and walks in ${c}`, (c) => `beaches, lakes and outdoor places near ${c}`],
+  museums: [(c) => `museums and galleries in ${c}`, (c) => `historic sites and monuments in ${c}`, (c) => `art and culture venues in ${c}`],
+  nightlife: [(c) => `best bars and nightlife in ${c}`, (c) => `rooftop bars and cocktail bars in ${c}`, (c) => `live music venues and night markets in ${c}`],
+  gems: [(c) => `hidden gems and unusual things to do in ${c}`, (c) => `quirky local favourites off the beaten path in ${c}`, (c) => `secret spots locals love in ${c}`],
 };
 
 function shapeTopPlaces(raw) {
@@ -362,42 +364,28 @@ app.get("/top-places", globalLimiter, async (req, res) => {
   if (!key) return res.status(503).json({ error: "Places not configured" });
   const city = String(req.query.city || "").trim().slice(0, 120);
   if (!city) return res.status(400).json({ error: "city is required" });
-  const cat = TOP_QUERIES[String(req.query.cat || "top")] ? String(req.query.cat || "top") : "top";
+  const cat = Object.prototype.hasOwnProperty.call(TOP_QUERIES, String(req.query.cat || "top")) ? String(req.query.cat || "top") : "top";
   const page = Math.max(0, Math.min(2, parseInt(String(req.query.page || "0"), 10) || 0));
 
   const cacheKey = `${city.toLowerCase()}|${cat}`;
   let entry = TOP_PLACES_CACHE.get(cacheKey);
   if (entry && Date.now() - entry.at > TOP_PLACES_TTL_MS) entry = undefined;
+  if (!entry) entry = { at: Date.now(), pages: [] };
 
   try {
-    if (!entry) {
-      const data = await topPlacesFetch(key, `query=${encodeURIComponent(TOP_QUERIES[cat](city))}`);
-      entry = { at: Date.now(), results: shapeTopPlaces(data?.results), nextToken: data?.next_page_token || null };
-      if (entry.results.length > 0) {
-        if (TOP_PLACES_CACHE.size > 1500) TOP_PLACES_CACHE.delete(TOP_PLACES_CACHE.keys().next().value);
-        TOP_PLACES_CACHE.set(cacheKey, entry);
-      }
+    const queries = TOP_QUERIES[cat];
+    // Run only the searches someone has scrolled far enough to need.
+    while (entry.pages.length <= page && entry.pages.length < queries.length) {
+      const data = await topPlacesFetch(key, `query=${encodeURIComponent(queries[entry.pages.length](city))}`);
+      const seen = new Set(entry.pages.flat().map((r) => r.name.toLowerCase()));
+      entry.pages.push(shapeTopPlaces(data?.results).filter((r) => !seen.has(r.name.toLowerCase())));
     }
-    // Read further pages only when someone has scrolled that far.
-    let guard = 0;
-    while (entry.results.length < (page + 1) * TOP_PAGE && entry.nextToken && guard < 2) {
-      guard += 1;
-      let data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
-      // A page token takes a couple of seconds to become valid after it is
-      // issued. Wait and try again; if it is still not ready, keep the token
-      // and let the app ask again, rather than deciding there is no more.
-      for (let tries = 0; data?.status === "INVALID_REQUEST" && tries < 2; tries += 1) {
-        await new Promise((r) => setTimeout(r, 2000));
-        data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
-      }
-      if (data?.status === "INVALID_REQUEST") break;
-      if (data?.status !== "OK") { entry.nextToken = null; break; }
-      const seen = new Set(entry.results.map((r) => r.name.toLowerCase()));
-      entry.results.push(...shapeTopPlaces(data.results).filter((r) => !seen.has(r.name.toLowerCase())));
-      entry.nextToken = data.next_page_token || null;
+    if (entry.pages[0] && entry.pages[0].length > 0) {
+      if (TOP_PLACES_CACHE.size > 1500) TOP_PLACES_CACHE.delete(TOP_PLACES_CACHE.keys().next().value);
+      TOP_PLACES_CACHE.set(cacheKey, entry);
     }
-    const results = entry.results.slice(page * TOP_PAGE, (page + 1) * TOP_PAGE);
-    const more = page < 2 && (entry.results.length > (page + 1) * TOP_PAGE || !!entry.nextToken);
+    const results = entry.pages[page] || [];
+    const more = page + 1 < queries.length && (entry.pages[0] || []).length > 0;
     return res.json({ results, more });
   } catch (err) {
     console.warn("[top-places] failed:", err?.message || err);
