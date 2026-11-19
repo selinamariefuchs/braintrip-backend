@@ -319,6 +319,54 @@ app.get("/place-search", globalLimiter, async (req, res) => {
   }
 });
 
+// ─── Popular places in a city ────────────────────────────────
+//
+// What people go to see in a city, without the player having to be there or
+// to have played anything. One Google text search per city, kept for a day,
+// so a city costs one lookup no matter how many people open it.
+const TOP_PLACES_CACHE = new Map(); // cityLower -> { at, results }
+const TOP_PLACES_TTL_MS = 24 * 60 * 60 * 1000;
+const NOT_A_SIGHT = new Set(["travel_agency", "lodging", "tour_agency", "real_estate_agency", "car_rental"]);
+
+app.get("/top-places", globalLimiter, async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return res.status(503).json({ error: "Places not configured" });
+  const city = String(req.query.city || "").trim().slice(0, 120);
+  if (!city) return res.status(400).json({ error: "city is required" });
+
+  const cacheKey = city.toLowerCase();
+  const hit = TOP_PLACES_CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.at < TOP_PLACES_TTL_MS) return res.json({ results: hit.results });
+
+  try {
+    const searchRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(`top sights and things to do in ${city}`)}&key=${key}`
+    );
+    const data = await searchRes.json();
+    const results = (Array.isArray(data?.results) ? data.results : [])
+      .filter((r) => r?.name && !(r.types || []).some((t) => NOT_A_SIGHT.has(t)))
+      .filter((r) => (r.user_ratings_total || 0) >= 20)
+      .map((r) => ({
+        name: r.name,
+        address: r.formatted_address || "",
+        rating: typeof r.rating === "number" ? r.rating : null,
+        totalRatings: typeof r.user_ratings_total === "number" ? r.user_ratings_total : null,
+        types: Array.isArray(r.types) ? r.types.slice(0, 4) : [],
+      }))
+      // Well loved and well known first: the rating, weighted by how many gave it.
+      .sort((a, b) => (b.rating || 0) * Math.log10((b.totalRatings || 1) + 10) - (a.rating || 0) * Math.log10((a.totalRatings || 1) + 10))
+      .slice(0, 12);
+    if (results.length > 0) {
+      if (TOP_PLACES_CACHE.size > 500) TOP_PLACES_CACHE.delete(TOP_PLACES_CACHE.keys().next().value);
+      TOP_PLACES_CACHE.set(cacheKey, { at: Date.now(), results });
+    }
+    return res.json({ results });
+  } catch (err) {
+    console.warn("[top-places] failed:", err?.message || err);
+    return res.status(500).json({ error: "Lookup failed" });
+  }
+});
+
 // Serves a photo by Places photo_reference (from /place-search results).
 const PHOTO_REF_CACHE = new Map(); // `${width}:${ref}` -> googleusercontent url
 
