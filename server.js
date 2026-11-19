@@ -322,45 +322,80 @@ app.get("/place-search", globalLimiter, async (req, res) => {
 // ─── Popular places in a city ────────────────────────────────
 //
 // What people go to see in a city, without the player having to be there or
-// to have played anything. One Google text search per city, kept for a day,
-// so a city costs one lookup no matter how many people open it.
-const TOP_PLACES_CACHE = new Map(); // cityLower -> { at, results }
+// to have played anything. Each city and category is one Google text search,
+// read a page of twenty at a time (Google gives up to three pages) and kept
+// for a day, so it costs the same however many people open it.
+const TOP_PLACES_CACHE = new Map(); // `${city}|${cat}` -> { at, results, nextToken }
 const TOP_PLACES_TTL_MS = 24 * 60 * 60 * 1000;
+const TOP_PAGE = 20;
 const NOT_A_SIGHT = new Set(["travel_agency", "lodging", "tour_agency", "real_estate_agency", "car_rental"]);
+const TOP_QUERIES = {
+  top: (c) => `top sights and things to do in ${c}`,
+  food: (c) => `best restaurants and street food in ${c}`,
+  nature: (c) => `parks, gardens and nature spots in ${c}`,
+  museums: (c) => `museums and galleries in ${c}`,
+  nightlife: (c) => `best bars and nightlife in ${c}`,
+  gems: (c) => `hidden gems and unusual things to do in ${c}`,
+};
+
+function shapeTopPlaces(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((r) => r?.name && !(r.types || []).some((t) => NOT_A_SIGHT.has(t)))
+    .filter((r) => (r.user_ratings_total || 0) >= 20)
+    .map((r) => ({
+      name: r.name,
+      address: r.formatted_address || "",
+      rating: typeof r.rating === "number" ? r.rating : null,
+      totalRatings: typeof r.user_ratings_total === "number" ? r.user_ratings_total : null,
+    }))
+    // Within a page: well loved and well known first.
+    .sort((a, b) => (b.rating || 0) * Math.log10((b.totalRatings || 1) + 10) - (a.rating || 0) * Math.log10((a.totalRatings || 1) + 10));
+}
+
+async function topPlacesFetch(key, params) {
+  const res = await fetch(`https://maps.googleapis.com/maps/api/place/textsearch/json?${params}&key=${key}`);
+  return res.json();
+}
 
 app.get("/top-places", globalLimiter, async (req, res) => {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) return res.status(503).json({ error: "Places not configured" });
   const city = String(req.query.city || "").trim().slice(0, 120);
   if (!city) return res.status(400).json({ error: "city is required" });
+  const cat = TOP_QUERIES[String(req.query.cat || "top")] ? String(req.query.cat || "top") : "top";
+  const page = Math.max(0, Math.min(2, parseInt(String(req.query.page || "0"), 10) || 0));
 
-  const cacheKey = city.toLowerCase();
-  const hit = TOP_PLACES_CACHE.get(cacheKey);
-  if (hit && Date.now() - hit.at < TOP_PLACES_TTL_MS) return res.json({ results: hit.results });
+  const cacheKey = `${city.toLowerCase()}|${cat}`;
+  let entry = TOP_PLACES_CACHE.get(cacheKey);
+  if (entry && Date.now() - entry.at > TOP_PLACES_TTL_MS) entry = undefined;
 
   try {
-    const searchRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(`top sights and things to do in ${city}`)}&key=${key}`
-    );
-    const data = await searchRes.json();
-    const results = (Array.isArray(data?.results) ? data.results : [])
-      .filter((r) => r?.name && !(r.types || []).some((t) => NOT_A_SIGHT.has(t)))
-      .filter((r) => (r.user_ratings_total || 0) >= 20)
-      .map((r) => ({
-        name: r.name,
-        address: r.formatted_address || "",
-        rating: typeof r.rating === "number" ? r.rating : null,
-        totalRatings: typeof r.user_ratings_total === "number" ? r.user_ratings_total : null,
-        types: Array.isArray(r.types) ? r.types.slice(0, 4) : [],
-      }))
-      // Well loved and well known first: the rating, weighted by how many gave it.
-      .sort((a, b) => (b.rating || 0) * Math.log10((b.totalRatings || 1) + 10) - (a.rating || 0) * Math.log10((a.totalRatings || 1) + 10))
-      .slice(0, 12);
-    if (results.length > 0) {
-      if (TOP_PLACES_CACHE.size > 500) TOP_PLACES_CACHE.delete(TOP_PLACES_CACHE.keys().next().value);
-      TOP_PLACES_CACHE.set(cacheKey, { at: Date.now(), results });
+    if (!entry) {
+      const data = await topPlacesFetch(key, `query=${encodeURIComponent(TOP_QUERIES[cat](city))}`);
+      entry = { at: Date.now(), results: shapeTopPlaces(data?.results), nextToken: data?.next_page_token || null };
+      if (entry.results.length > 0) {
+        if (TOP_PLACES_CACHE.size > 1500) TOP_PLACES_CACHE.delete(TOP_PLACES_CACHE.keys().next().value);
+        TOP_PLACES_CACHE.set(cacheKey, entry);
+      }
     }
-    return res.json({ results });
+    // Read further pages only when someone has scrolled that far.
+    let guard = 0;
+    while (entry.results.length < (page + 1) * TOP_PAGE && entry.nextToken && guard < 2) {
+      guard += 1;
+      let data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
+      // A page token takes a moment to become valid after it is issued.
+      if (data?.status === "INVALID_REQUEST") {
+        await new Promise((r) => setTimeout(r, 2000));
+        data = await topPlacesFetch(key, `pagetoken=${encodeURIComponent(entry.nextToken)}`);
+      }
+      if (data?.status !== "OK") { entry.nextToken = null; break; }
+      const seen = new Set(entry.results.map((r) => r.name.toLowerCase()));
+      entry.results.push(...shapeTopPlaces(data.results).filter((r) => !seen.has(r.name.toLowerCase())));
+      entry.nextToken = data.next_page_token || null;
+    }
+    const results = entry.results.slice(page * TOP_PAGE, (page + 1) * TOP_PAGE);
+    const more = page < 2 && (entry.results.length > (page + 1) * TOP_PAGE || !!entry.nextToken);
+    return res.json({ results, more });
   } catch (err) {
     console.warn("[top-places] failed:", err?.message || err);
     return res.status(500).json({ error: "Lookup failed" });
